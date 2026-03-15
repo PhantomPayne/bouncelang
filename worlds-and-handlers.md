@@ -405,3 +405,104 @@ No flag needed. The distinction is structural:
 | Can `bounce publish` | Yes | Typically no |
 
 Libraries define types, functions, and handlers that applications wire together via worlds.
+
+---
+
+## 7. DST / Testing
+
+### The Test World Is the DST Contract
+
+The `world test` block is the primary DST configuration mechanism. It replaces all real-world
+effect handlers with deterministic test doubles:
+
+```bounce
+world test {
+    config {
+        test_timeout_ms: Int = 5000
+    }
+    entry test_runner
+    handle Database with InMemoryDb          // deterministic in-memory state
+    handle Network  with MockNetwork         // no real HTTP, explicit mock configuration
+    handle Time     with SimulatedTime       // virtual clock — freeze and advance
+    handle Random   with SeededRandom        // deterministic PRNG from seed
+    handle Queue    with InMemoryQueue       // synchronous delivery
+    handle IO       with CapturedIO          // captures stdout/stderr, feeds mock stdin
+}
+```
+
+### Virtual Time in World Tests
+
+`SimulatedTime` implements the `Time` effect with a virtual clock. All `Time.now()`, `Time.sleep()`,
+`Time.after()`, and `Time.every()` calls use the virtual clock:
+
+```bounce
+test fn rate_limiter_resets_after_window() {
+    Time.freeze(@2026-03-13T12:00:00Z)
+
+    let limiter = RateLimiter.new(max: 10, window: 1m)
+    range(0, 10) |> for_each { _ => limiter.consume() }
+
+    // Window not elapsed yet — next consume should fail
+    try limiter.consume() {
+        _ => fail("expected rate limit error")
+        RateLimitError { ... } => assert(true)
+    }
+
+    // Advance past the window
+    Time.advance(61s)
+
+    // Limiter should reset
+    limiter.consume()    // no error
+}
+```
+
+### Fault Injection via Handler Overrides
+
+Inline `handle` overrides inject failures at specific effect boundaries without needing a full
+alternative world:
+
+```bounce
+test fn retries_on_network_failure() {
+    let call_count = s.state(0)
+
+    handle FailFirstNetwork(call_count) {
+        fetch_with_retry(url: "https://api.example.com/data")
+    }
+
+    assert_eq(call_count.value, 2)    // one failure + one success
+}
+
+handler FailFirstNetwork(count: State<Int>): Network {
+    get(url) => {
+        count.update { n => n + 1 }
+        if count.read { n => n } == 1 {
+            raise(NetworkError { url, status: 500, message: "injected failure" })
+        }
+        resume(http_get(url))
+    }
+}
+```
+
+### Deterministic Scheduling
+
+The `Concurrency` effect uses a deterministic scheduler in test mode. Given the same seed, task
+interleaving is reproducible. A failing test records its seed in the output — re-running with the
+same seed reproduces the failure exactly:
+
+```
+Test failed: no_race_condition (seed: 4294967297)
+  Re-run with: bounce test --seed 4294967297 no_race_condition
+```
+
+---
+
+## 8. LSP / DX (Developer Experience)
+
+| Checklist Item | Behavior |
+|---|---|
+| **Completions** | In a `world` block, after `handle `, the LSP suggests all effects in the transitively required set for the `entry` function, sorted by unsatisfied-first. After `with `, the LSP suggests all `handler` declarations in scope for the selected effect. Inside a `config { }` block, field types are autocompleted from available types. |
+| **Inlay hints** | On the `entry` declaration, the LSP shows the full transitive effect set inferred for the entry function. This lets the developer see at a glance which `handle` lines are needed. On each `handle` line, the LSP shows the handler's constructor arguments and their types as inlay hints. |
+| **Diagnostics** | Missing handler: "Effect `Logger` is required by `log_request` (routes.bounce:42) but no handler is declared in world `server`." Unknown handler: "`WasiHttp` is not in scope — import it from a dep or define a handler." Config type mismatch: "`database_url` expects `String`, but world `staging` provides `Int`." Unused handler: "Effect `Queue` is handled but not used by any function in `app`'s call graph." |
+| **Quick fixes** | "Add missing handler" — inserts a `handle Effect with ?` stub for each unsatisfied effect. "Generate config schema" — creates the `config { }` block with all fields inferred from `config.field` usages in the entry function. "Extract world" — cursor on a set of `handle` lines, extracts them into a named `world base { }` for composition. |
+| **Hover / go-to-definition** | Hovering a handler name (e.g., `WasiHttp`) shows the effect it satisfies and its constructor arguments. Go-to-definition navigates to the `handler` declaration. Hovering `config.field_name` shows the field type and its default value. |
+| **Semantic highlighting** | `world` and `handler` keywords receive distinct tokens. Effect names in `handle` lines (`Network`, `Database`) receive the `type` semantic token. Handler names (`WasiHttp`, `Postgres`) receive the `class` token. Config field names receive the `property` token. |
