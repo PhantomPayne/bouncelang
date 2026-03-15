@@ -239,6 +239,60 @@ fn process_sensitive_data(data: Data) {
 
 Handlers form a stack — inline `handle` pushes, scope exit pops. This is standard algebraic effect handler semantics.
 
+### 3.6 Entry Function Signatures
+
+The entry function's **signature** is determined by the WASI component model target, not by the
+world declaration itself. Different component types expect different signatures:
+
+| Component type | Entry signature | Notes |
+|---|---|---|
+| CLI (`wasi:cli/command`) | `fn main() -> ()` | Reads args via `IO.read_args()` |
+| HTTP handler (`wasi:http/incoming-handler`) | `fn handle_request(req: Request) -> Response` | `Request` and `Response` from `std/http` |
+| Background worker (queue trigger) | `fn process(job: Bytes) -> ()` | Format is queue-specific |
+| Cron / timer trigger | `fn tick(at: Datetime) -> ()` | |
+
+The `bounce build --world name` command selects the component model target based on the world's
+handler set and any explicit target annotation. The compiler validates the entry signature against
+the expected target:
+
+```bounce
+// ❌ Compile error: world `server` targets wasi:http but entry `main` has signature fn() -> ()
+world server {
+    entry main         // wrong signature for HTTP target
+    handle Network with WasiHttp
+}
+
+// ✅ Correct: handle_request has the right signature for HTTP
+world server {
+    entry handle_request
+    handle Network with WasiHttp
+}
+```
+
+**Config access inside the entry function:** Config values are available inside any function
+called from the world's entry, not just in handler wiring expressions. The config is injected as
+a module-level record named `config` — any function in the package can read `config.field_name`
+without importing it explicitly:
+
+```bounce
+// world declaration
+world server {
+    config {
+        api_base: String
+        log_level: :debug | :info | :warn | :error = :info
+    }
+    entry handle_request
+    handle Network with WasiHttp
+    handle Logger  with StdoutLogger(level: config.log_level)
+}
+
+// app.bounce — config is available without any import
+fn handle_request(req: Request) -> Response {
+    let base = config.api_base      // ✅ reads from world config
+    // ...
+}
+```
+
 ---
 
 ## 4. Effect Annotations — Where They're Required

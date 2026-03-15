@@ -468,3 +468,191 @@ Same analysis as iteration 2: the v2 reference files establish the section templ
 - **Discarded option rationales** are one sentence. The full tradeoff analysis is in the Phase D scoring table for that question.
 - **"Known Open Issues"** at the top of this file lists everything not resolved at termination — in this run, none.
 - The **v2 numbered specs** (`01-`, `02-`, `04-`, `07-`, `08-`) were not modified during this run; they served as the reference template for all missing sections.
+
+---
+
+## Pipeline Cycle 2 — Tester → Recommender → Consistency Pass
+
+**Date:** 2026-03-15
+**Pipeline files:** `tester-programs.md`, `tester-findings.md`, `recommender-recommendations.md`
+**Trigger:** Issue "run one full pipeline cycle"
+
+### Summary
+
+| | |
+|---|---|
+| **Tester findings** | 27 (Rounds 1–3) |
+| **Recommender recommendations** | 12 |
+| **New spec files created** | 1 (`05-stdlib-effects.md`) |
+| **Existing spec files updated** | 9 |
+| **Consistency issues introduced by recommender pass** | 0 |
+
+---
+
+### Recommender Decisions
+
+The following decisions were made by the recommender agent (see `recommender-recommendations.md`
+for full option evaluations).
+
+---
+
+#### Rec-1 — `error` declaration syntax (contradiction)
+
+**Finding:** R1-F2. `04-effects-and-handlers.md` used `error X { fields }` (no `=`); `error-handling.md` used `error X = { fields }` (with `=`).
+
+**Decision:** The `=` form is canonical. It is consistent with `type X = { ... }` and `nominal type X = ...`. The `04-effects-and-handlers.md` example was incorrect.
+
+**Change:** Fixed `error NotFoundError { id: Int }` → `error NotFoundError = { id: Int }` and `raise NotFoundError { id }` → `raise(NotFoundError { id })` in `04-effects-and-handlers.md` §2.1.
+
+**Discarded:** The no-`=` form — inconsistent with all other type declaration patterns.
+
+---
+
+#### Rec-2 — Boolean operators and `if`/`else` as expression
+
+**Finding:** R2-F10 (boolean operators not defined), R1-F10 (`if`/`else` expression status not stated).
+
+**Decision:** Add explicit documentation to `01-primitives.md` §3. `&&`, `||`, `!` are short-circuit boolean operators. `if`/`else` is an expression. An `if` without `else` has type `()`.
+
+**Change:** Added "Boolean Operators & Control Flow Expressions" subsection to `01-primitives.md` §3.
+
+---
+
+#### Rec-3 — Unit type `()` and block sequencing
+
+**Finding:** R1-F4, R2-F8.
+
+**Decision:** Define `()` in `02-data-structures.md` §6 (Tuples) as the empty tuple — a type with exactly one value. Document block sequencing: a block returns the value of its last expression.
+
+**Change:** Added "The Unit Type `()`" subsection to `02-data-structures.md` §6.
+
+---
+
+#### Rec-4 — Lambda syntax and interface `self`
+
+**Finding:** R1-F6, R1-F7, R2-F7.
+
+**Decision:** Add "Function Literals (Lambdas)" subsection to `generics-and-type-system.md` §2 documenting `{ x => expr }` as the only anonymous function literal syntax. Add clarifying paragraph to §3 stating `self` in interface methods means the implementing type.
+
+**Change:** Added to `generics-and-type-system.md` §2 and §3.
+
+---
+
+#### Rec-5 — New `05-stdlib-effects.md` spec file
+
+**Finding:** R1-F12, R1-F13, R2-F2, R2-F3, R3-F2.
+
+**Decision:** Create a new numbered spec file `05-stdlib-effects.md` documenting the complete API for all standard effects: `IO`, `FileSystem`, `Network`, `Time`, `Random`, and a reference `Database` third-party effect. Follows the v2 section template throughout.
+
+**Change:** Created `05-stdlib-effects.md`.
+
+---
+
+#### Rec-6 — `mut` local variables
+
+**Finding:** R2-F9.
+
+**Decision:** The `generics-and-type-system.md §4` already documented `let mut` but inconsistently with the generator examples in `07-concurrency.md` that use `mut` without `let`. Clarified: `let` is optional, `mut` alone is equivalent. Added note on closure capture (value copy, not reference).
+
+**Change:** Rewrote `generics-and-type-system.md §4` "Mutable Local Bindings" subsection.
+
+---
+
+#### Rec-7 — `Instant` arithmetic
+
+**Finding:** R3-F8.
+
+**Decision:** Add `Instant - Instant -> Duration` and `Instant + Duration -> Instant` to `01-primitives.md §2`. The spec already stated these constraints implicitly via the prohibition on calendar math; making them explicit removes ambiguity.
+
+**Change:** Added Instant arithmetic example block to `01-primitives.md §2`.
+
+---
+
+#### Rec-8 — World entry function signatures and config access
+
+**Finding:** R3-F4, R3-F7, R2-F6.
+
+**Decision:** Add §3.6 "Entry Function Signatures" to `worlds-and-handlers.md` documenting the expected entry signature per WASI component type (CLI, HTTP, worker). Add clarification that `config` is a module-level record accessible in any function body in the package.
+
+**Change:** Added `worlds-and-handlers.md §3.6`.
+
+---
+
+#### Rec-9 — Map literal vs record literal
+
+**Finding:** R3-F6.
+
+**Decision:** Add disambiguation note to `02-data-structures.md §5`: string-literal keys → Map; identifier keys → record. No ambiguity is possible.
+
+**Change:** Added disambiguation paragraph to `02-data-structures.md §5`.
+
+---
+
+#### Rec-10 — Optional `input` fields
+
+**Finding:** R3-F5.
+
+**Decision:** Optional fields in `input` declarations were already in the spec (`nickname as String.max_length(50)?` shown in §3.3). The finding was a discoverability issue. Added a semantic comment to the existing example clarifying target type requirements (`T?`).
+
+**Change:** Added comment to `08-serialization-boundaries.md §3.3` optional field example.
+
+---
+
+#### Rec-11 — Minor clarifications
+
+**Finding:** R1-F3, R1-F1.
+
+**Decision:**
+- R1-F3: Added `raise` vs `raise(e)` callout box to `error-handling.md §3`.
+- R1-F1: Added general trailing-comma rule statement to `formatter-principles.md §6` — trailing commas apply to any comma-separated list in an expanded context, explicitly listing type field lists.
+
+---
+
+#### Rec-12 — Concurrency/Sequence API clarifications
+
+**Finding:** R2-F11, R2-F13, R1-F8, R1-F9, R2-F12.
+
+**Decision:**
+- Canonicalized `each` (not `for_each`) in `07-concurrency.md §3` Terminal operators table.
+- Added `fold` (safe alternative to `reduce`), `any`, `all`, `join`, and `chunk` to the table.
+- Added `reduce` panic-on-empty note.
+- Added `Task<T>` API subsection to `07-concurrency.md §4` documenting `.await()`, `.cancel()`, `.is_done()`.
+- Changed `a.join()` → `a.await()` in the parallel computation example (`.join()` was never defined).
+
+---
+
+### Consistency Pass After Recommender Changes
+
+The consistency agent verified all recommender changes. Issues found and resolved:
+
+| Issue | Resolution |
+|---|---|
+| `07-concurrency.md §4` used `.join()` in task example (not defined) | Changed to `.await()` in the same edit as Rec-12 |
+| `04-effects-and-handlers.md` used `try`/`catch` in two bullet points | Fixed: changed to `try` blocks (no `catch` keyword) |
+
+### Final Scores After Pipeline Cycle 2
+
+| File | Previous Score | Score After Cycle 2 | Notes |
+|---|---|---|---|
+| `01-primitives.md` | 10 | 10 | Additions only (boolean ops, Instant arithmetic) — no regressions |
+| `02-data-structures.md` | 10 | 10 | Additions only (unit type, Map disambiguation) |
+| `04-effects-and-handlers.md` | 9 | 9 | Fixed error syntax contradiction |
+| `05-stdlib-effects.md` | — | 9 | New file; one thin area (HTTP API deferred to future cycle) |
+| `07-concurrency.md` | 9 | 9 | Sequence table completed; Task<T> API added |
+| `08-serialization-boundaries.md` | 10 | 10 | Minor comment addition only |
+| `atoms-and-unions.md` | 9 | 9 | No changes |
+| `error-handling.md` | 9 | 9 | Added `raise` vs `raise(e)` callout |
+| `formatter-principles.md` | 10 | 10 | Added general trailing-comma rule statement |
+| `generics-and-type-system.md` | 9 | 9 | Lambda syntax, interface self, mut, record construction added |
+| `methods-and-packages.md` | 9 | 9 | No changes |
+| `modules-and-imports.md` | 9 | 9 | No changes |
+| `worlds-and-handlers.md` | 9 | 9 | Added entry signature §3.6 |
+
+### Known Open Issues (Carried Forward)
+
+| # | Area | Description | Priority |
+|---|---|---|---|
+| 1 | HTTP API | `Request`, `Response`, `Router`, `parse_input` API not defined; only referenced in examples | 2 |
+| 2 | Crypto | No Crypto effect or handler defined; placeholder exists as "third-party" | 3 |
+| 3 | `input` for opaque types | Input declarations cannot target opaque types | 4 |
+| 4 | `reduce` return on empty | Currently defined as panic — should consider `fold` as the recommended safe alternative (done in Rec-12) | Resolved |

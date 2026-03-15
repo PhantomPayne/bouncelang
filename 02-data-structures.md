@@ -138,6 +138,19 @@ Collections are built-in, generically typed data structures that utilize Structu
 *   **`List<T>`**: An ordered sequence of elements. `[1, 2, 3]`.
 *   **`Map<K, V>`**: A hash map where `K` must fulfill the `Hash` trait. `{ "key": 42 }`.
 
+**Map literals vs. record literals:** The compiler distinguishes them by key syntax.
+
+```bounce
+// Map literal — keys are string literals (quoted)
+let scores: Map<String, Int> = { "Alice": 95, "Bob": 87 }
+
+// Record literal — keys are identifiers (unquoted)
+let point = { x: 10, y: 20 }
+```
+
+String-literal keys always produce a `Map<String, V>`. Identifier keys always produce a record.
+There is no ambiguity — the parser classifies the literal at the first key token.
+
 ---
 
 ## 6. Tuples & Recursive Types
@@ -147,6 +160,31 @@ Tuples are anonymous, ordered sequences of types. They are sugar for anonymous r
 ```bounce
 let pair: (Int, String) = (1, "Alice")
 ```
+
+### The Unit Type `()`
+
+`()` is the **empty tuple** — a type with exactly one possible value (itself). It is used as the
+return type of functions that perform side effects with no meaningful result.
+
+```bounce
+fn greet(name: String) -> () {
+    IO.println("Hello, {name}!")
+}
+```
+
+**Block sequencing:** A block `{ stmt1; stmt2; expr }` evaluates each statement in order and
+returns the value of the last expression. If the last item is a side-effecting call (such as
+`IO.println(...)`) whose return type is `()`, the block itself returns `()`:
+
+```bounce
+fn log_and_cancel(order: Order) -> Order {
+    IO.println("Cancelling order {order.id}")   // returns ()
+    { ...order, status: :cancelled }              // this is the block's return value
+}
+```
+
+**Wasm:** `()` compiles to no Wasm return values (a `void` function). `()` is never serialised — it
+is a type-level concept only and does not appear in JSON or any other serialisation format.
 
 ### Recursive Types
 Unions natively support recursion for trees and linked structures.

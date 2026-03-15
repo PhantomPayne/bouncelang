@@ -129,6 +129,20 @@ let delay: Duration = 500ms
 let long_wait: Duration = 2h + 30m
 ```
 
+**Instant Arithmetic:**
+`Instant` supports exactly two arithmetic operations — no calendar math, no timezones:
+
+```bounce
+let start: Instant = Time.now()
+// ... do work ...
+let end: Instant = Time.now()
+
+let elapsed: Duration = end - start        // Instant - Instant -> Duration
+let deadline: Instant = start + 30s       // Instant + Duration -> Instant
+```
+
+`Instant - Instant` always produces a non-negative `Duration` (if the clock was monotonic, `end >= start`). Adding a `Duration` to an `Instant` produces a future `Instant`. All other arithmetic on `Instant` (addition of two `Instant`s, multiplication, division) is a compile error.
+
 ---
 
 ## 3. Math & Division Semantics
@@ -166,6 +180,49 @@ import math
 let circumference = 2.0 * math.pi * radius
 let y = math.sin(angle)
 ```
+
+### Boolean Operators
+
+`Bool` values support the standard logical operators:
+
+*   **`&&` (AND):** Short-circuit logical AND. `true && false == false`. If the left operand is `false`, the right operand is **not evaluated**.
+*   **`||` (OR):** Short-circuit logical OR. `true || false == true`. If the left operand is `true`, the right operand is **not evaluated**.
+*   **`!` (NOT):** Logical negation. `!true == false`.
+
+```bounce
+let eligible = user.age >= 18 && user.verified && !user.banned
+let admin_or_owner = user.role == :admin || user.id == resource.owner_id
+```
+
+Precedence (highest to lowest): `!` > comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`) > `&&` > `||`.
+
+### `if`/`else` as an Expression
+
+`if`/`else` is an **expression** in Bouncelang — it returns the value of the taken branch.
+
+```bounce
+// if/else returns the value of the matching branch
+let label = if score >= 80 { "pass" } else { "fail" }
+
+// Both branches must return the same type
+let abs_val = if x >= 0 { x } else { -x }
+
+// In pipelines
+scores |> map { s => if s >= 80 { :pass } else { :fail } }
+```
+
+If an `if` has no `else` branch, its type is `()` (unit) — it is evaluated only for the side
+effect and the result is discarded:
+
+```bounce
+if user.admin {
+    IO.println("Admin access granted")
+}
+// type: () — no else needed when the result is not used
+```
+
+Both branches of an `if`/`else` expression must return the same type. A branch that calls `raise`
+or `panic` satisfies any type (`Never`).
 
 ---
 

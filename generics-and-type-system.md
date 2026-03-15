@@ -120,6 +120,36 @@ export opaque type Money with { amount, currency, new, add }
 | `nominal type` | ✅ direct | ✅ all | ✅ yes | No — just type safety |
 | `opaque type` | ❌ factory only | `with` list only | ❌ no | Yes — hidden internals |
 
+**Record construction forms:** For structural (`type`) and nominal types, two equivalent
+construction forms are valid:
+
+```bounce
+type Point = { x: Float, y: Float }
+
+// Form 1 — TypeName { fields }
+// The compiler verifies all required fields against the named type.
+let p1 = Point { x: 1.0, y: 2.0 }
+
+// Form 2 — structural literal with type annotation on the binding
+// The compiler infers the shape from context.
+let p2: Point = { x: 1.0, y: 2.0 }
+```
+
+Both forms are correct. `TypeName { }` is preferred when you want the compiler to check field
+completeness at the construction site. `{ }` with an annotation is preferred when the type is
+clear from context (e.g., a function return type or a known parameter type).
+
+**Opaque primitive wrappers:** An opaque type can wrap a single primitive:
+
+```bounce
+opaque type UserId = Int
+opaque type Email = String
+```
+
+This is distinct from `nominal type` (which is transparent) — external code cannot see the
+underlying `Int`. The opaque wrapper is constructed and accessed only through factory functions
+listed in the `with` clause. Zero cost at runtime — it compiles to the underlying type.
+
 ---
 
 ## 2. Generics
@@ -170,6 +200,47 @@ fn sort_and_display<T>(list: List<T>) -> List<String>
 
 Structural typing handles everything else — if a function takes `{ name: String }`, any type with a `name: String` field works. No constraint needed.
 
+### Function Literals (Lambdas)
+
+`fn(T) -> U` is a **type annotation** for a function value. The **literal** syntax for anonymous
+functions is `{ params => expr }` — a block with a `=>` separating the parameter list from the
+body.
+
+```bounce
+// Single parameter
+let double = { x => x * 2 }                       // fn(Int) -> Int (inferred)
+
+// Multiple parameters
+let add = { x, y => x + y }                       // fn(Int, Int) -> Int
+
+// Zero parameters (thunk)
+let greeting = { => "Hello!" }                     // fn() -> String
+// or just a block (when it captures nothing):
+let greeting = { "Hello!" }
+
+// Multi-line body — last expression is the return value
+let describe = { score =>
+    if score >= 80 { "pass" }
+    else if score >= 60 { "borderline" }
+    else { "fail" }
+}
+```
+
+Lambdas work in **any argument position**, not just the final trailing argument:
+
+```bounce
+// Lambda as a non-trailing argument
+fn apply_twice<T>(f: fn(T) -> T, value: T) -> T { f(f(value)) }
+
+let result = apply_twice({ x => x * 2 }, 3)       // result == 12
+
+// Pipeline position (most common)
+scores |> filter { s => s.value > 80 } |> map { s => s.player }
+```
+
+The `fn(T) -> U` type annotation describes what a lambda argument must look like. You do not write
+`fn(x) => expr` as a value — the `{ x => expr }` form is the only anonymous function syntax.
+
 ### What We Don't Have
 
 No type-level computation. The type system is simple and predictable:
@@ -198,6 +269,24 @@ interface Display {
 interface Ord {
     fn compare(self, other: Self) -> :less | :equal | :greater
 }
+```
+
+**`self` in interface methods means the implementing type.** When you write `fn display(self) -> String`
+in an interface, `self` is a placeholder for "the type that satisfies this interface." The compiler
+substitutes the concrete type at the call site. You cannot annotate `self` with a specific type
+inside an interface declaration — if you need a function that takes a fixed type, declare it as a
+plain function, not an interface method.
+
+```bounce
+// ✅ Correct — self is the implementing type
+interface Parseable {
+    fn parse(bytes: Bytes) -> Self   // Self refers to the implementing type
+}
+
+// ❌ Wrong — self: Bytes means "the implementing type IS Bytes"
+// interface Parseable {
+//     fn parse(self: Bytes) -> T   // this won't work as intended
+// }
 ```
 
 ### Structural Satisfaction
@@ -312,15 +401,36 @@ let list2 = list1 |> push(1)     // list1 unchanged, list2 is a new value
 let list3 = list2 |> push(2)     // list2 unchanged, list3 is a new value
 ```
 
-### `let mut` — Mutable Bindings
+### Mutable Local Bindings (`mut`)
 
-`mut` on a binding means the variable name can be reassigned. The values themselves never change:
+`mut` on a binding means the variable name can be reassigned. The **values** themselves never
+change — `mut` is a property of the binding, not the value.
 
 ```bounce
-let mut list = LinkedList.empty()
-list = list |> push(1)    // rebind 'list' to a new value
-list = list |> push(2)    // rebind again
+// `let mut` and `mut` are equivalent — `let` is optional.
+let mut counter = 0
+counter = counter + 1
+counter = counter + 1   // counter is now 2
+
+// Shorthand without `let` (common in generators and loops):
+mut total = 0
+total = total + item
 ```
+
+`mut` is valid in any function context: regular functions, generators, handlers, and test
+functions. Mutations inside a closure capture the value at the time the closure is created —
+the closure has its own copy, so mutations inside a closure do not affect the outer binding:
+
+```bounce
+mut count = 0
+let increment = { => count = count + 1 }   // captures a COPY of count
+increment()
+increment()
+// count is still 0 — the closure mutated its own copy
+```
+
+To share mutable state across closures and concurrent tasks, use `State<T>` from the
+`Concurrency` effect (see `07-concurrency.md`).
 
 ### `mut` Fields — In-Place Update Sugar
 

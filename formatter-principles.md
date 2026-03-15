@@ -102,6 +102,10 @@ type Shape =
 
 ### Trailing Commas — Always
 
+Any comma-separated list that spans multiple lines gets a trailing comma after the last item.
+This applies to: **type field lists**, function parameter lists, record literals, list literals,
+argument lists, and import lists.
+
 Adding an item to a list changes one line, not two:
 
 ```bounce

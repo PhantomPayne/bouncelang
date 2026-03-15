@@ -59,16 +59,16 @@ The compiler uses this split for optimization:
 Key properties:
 - Always available, even in `pure fn`.
 - Propagates implicitly through function calls and pipelines.
-- Caught by `try`/`catch` blocks.
+- Caught by `try` blocks.
 - At the WASM level, it compiles to conditional branches and tagged return values.
 
 ```bounce
-error NotFoundError { id: Int }
+error NotFoundError = { id: Int }
 
 fn get_user(id: Int) -> User {
     let row = db_lookup(id)
     if row == :false {
-        raise NotFoundError { id }
+        raise(NotFoundError { id })
     }
     parse_user(row)
 }
@@ -88,7 +88,7 @@ fn unreachable_code() -> Never {
 }
 ```
 
-- Cannot be caught by `try`/`catch`.
+- Cannot be caught by `try` blocks.
 - Triggers `defer` and `using` cleanup before the component terminates.
 - In DST mode, panics are captured and reported as test failures with full stack traces.
 

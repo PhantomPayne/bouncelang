@@ -162,10 +162,34 @@ All operators are lazy (return a new Sequence) unless marked as terminal.
 | `collect` | `(Sequence<T> & :finite) -> List<T>` | Gather all values into a list |
 | `count` | `(Sequence<T> & :finite) -> Int` | Count values |
 | `sum` | `(Sequence<Int> & :finite) -> Int` | Sum all values |
-| `reduce` | `(Sequence<T> & :finite, fn(T, T) -> T) -> T` | Reduce to single value |
-| `for_each` | `(Sequence<T> & :finite, fn(T) -> Unit) -> Unit` | Side-effect per value |
-| `first` | `(Sequence<T>) -> T?` | First value or none |
-| `last` | `(Sequence<T> & :finite) -> T?` | Last value or none |
+| `reduce` | `(Sequence<T> & :finite, fn(T, T) -> T) -> T` | Reduce to single value — **panics on empty sequence** |
+| `fold` | `(Sequence<T> & :finite, U, fn(U, T) -> U) -> U` | Reduce with an initial value — safe on empty sequence |
+| `each` | `(Sequence<T> & :finite, fn(T) -> ()) -> ()` | Side-effect per value (canonical name — **not** `for_each`) |
+| `first` | `(Sequence<T>) -> T?` | First value or `:false` |
+| `last` | `(Sequence<T> & :finite) -> T?` | Last value or `:false` |
+| `any` | `(Sequence<T> & :finite, fn(T) -> Bool) -> Bool` | True if any element matches |
+| `all` | `(Sequence<T> & :finite, fn(T) -> Bool) -> Bool` | True if all elements match |
+| `join` | `(Sequence<String> & :finite, String) -> String` | Join strings with separator |
+
+> **`each` is the canonical terminal iteration operator.** The name `for_each` is not valid.
+> `each` does not require the sequence to be finite when used in a non-consuming context such as
+> inside a `Concurrency.scope` where the scope itself bounds the iteration.
+
+> **`reduce` vs `fold`:** Use `reduce` when the sequence is guaranteed non-empty and the element
+> type is also the accumulator type. Use `fold` when the sequence may be empty or when you need a
+> different accumulator type (e.g., `fold([], { acc, item => acc |> push(item) })`). Calling
+> `reduce` on an empty sequence is a **panic**.
+
+```bounce
+// reduce — elements must have the same type as the result
+let max = scores |> reduce { a, b => if a > b { a } else { b } }
+
+// fold — safe on empty, accumulator can differ from element type
+let total = items |> fold(0, { acc, item => acc + item.price })
+
+// join — string concatenation with separator
+let names = users |> map { u => u.name } |> join(", ")
+```
 
 ### Utility
 | Operator | Signature | Description |
@@ -223,12 +247,40 @@ Concurrency.scope { s =>
 
 Both return a `Task<T>` handle.
 
+### `Task<T>` API
+
+`Task<T>` is a handle to a running concurrent computation. It satisfies `Sequence<T> & :finite`
+with exactly one value — the result when the task completes.
+
+```bounce
+// Task<T> methods:
+//   .await() -> T         — suspend until the task completes, return its result
+//   .cancel() -> ()       — cancel the task (no-op if already done)
+//   .is_done() -> Bool    — non-blocking check
+
+// Await a single task
+let result: Int = task.await()
+
+// Await all tasks in a list
+let results: List<Int> = tasks |> map { t => t.await() } |> collect
+
+// Await all tasks, discarding results (for side-effecting tasks)
+tasks |> each { t => t.await() }
+
+// Await the first task to finish (cancel the others)
+let first: T = Concurrency.race([task_a, task_b, task_c])
+```
+
+If a `spawn`ed task raises an unhandled error, calling `.await()` re-raises that error in the
+calling fiber. If a `detach`ed task raises, the error is silently discarded (use `try` inside the
+detached block to handle it).
+
 ```bounce
 // Parallel computation — linked (one failure cancels everything)
 let (users, posts) = Concurrency.scope { s =>
     let a = s.spawn { fetch_users() }
     let b = s.spawn { fetch_posts() }
-    (a.join(), b.join())
+    (a.await(), b.await())
 }
 
 // Server — detached (one connection dying doesn't affect others)

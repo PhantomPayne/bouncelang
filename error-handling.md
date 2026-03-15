@@ -117,6 +117,13 @@ fn get_user(id: Int) -> User {
 
 `_ => raise` means "I acknowledge these errors exist but I'm not handling them here." The compiler infers the unhandled errors as effects on the enclosing function.
 
+> **`raise` vs `raise(e)` — two distinct forms:**
+>
+> - **`raise(error)`** — constructs and raises a *new* error value. Valid anywhere.
+> - **`raise`** (bare, no arguments) — re-raises the *current* error. Only valid inside a `try`
+>   arm. The compiler carries the error type from the matched arm to the enclosing function's
+>   inferred effect set. Writing `raise` outside a `try` arm is a compile error.
+
 ### Success Arm Can Raise
 
 The success arm is normal code — its effects propagate:
