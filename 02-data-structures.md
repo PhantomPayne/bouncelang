@@ -151,6 +151,28 @@ let point = { x: 10, y: 20 }
 String-literal keys always produce a `Map<String, V>`. Identifier keys always produce a record.
 There is no ambiguity — the parser classifies the literal at the first key token.
 
+**When to use Map vs Record:**
+
+| Use | Prefer |
+|---|---|
+| Fixed, known set of named fields (user, order, config) | **Record** — fields are type-checked, named, discoverable |
+| Dynamic key-value pairs with unknown/variable keys | **Map** — keys are runtime values |
+| HTTP headers, query params, JSON with unknown shape | **Map** — key set not known at compile time |
+| Typed API parameters, domain objects | **Record** — compiler verifies all required fields |
+| Frequency counts, grouping results (`group_by`) | **Map** — key set grows dynamically |
+
+```bounce
+// Record — key names known at compile time, type-checked
+type User = { id: Int, name: String, role: Role }
+let u = User { id: 1, name: "Alice", role: :admin }
+
+// Map — key names are runtime strings (e.g., HTTP headers)
+let headers: Map<String, String> = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer {token}",
+}
+```
+
 ---
 
 ## 6. Tuples & Recursive Types
@@ -166,20 +188,31 @@ let pair: (Int, String) = (1, "Alice")
 `()` is the **empty tuple** — a type with exactly one possible value (itself). It is used as the
 return type of functions that perform side effects with no meaningful result.
 
+> **Why `()` and not `void`?** Both mean the same thing. `()` is the canonical form in Bouncelang
+> because it is self-documenting as "the empty tuple" — it participates in the tuple type algebra
+> consistently. Developers from C/Java/TypeScript can mentally substitute `void` — they are
+> equivalent. The LSP hover text says "no return value (like void in other languages)" for
+> discoverability. The formatter always normalises to `()`.
+
 ```bounce
 fn greet(name: String) -> () {
-    IO.println("Hello, {name}!")
+    Terminal.println("Hello, {name}!")
+}
+
+// The return type annotation is optional when inferred:
+fn greet(name: String) {
+    Terminal.println("Hello, {name}!")
 }
 ```
 
 **Block sequencing:** A block `{ stmt1; stmt2; expr }` evaluates each statement in order and
 returns the value of the last expression. If the last item is a side-effecting call (such as
-`IO.println(...)`) whose return type is `()`, the block itself returns `()`:
+`Terminal.println(...)`) whose return type is `()`, the block itself returns `()`:
 
 ```bounce
 fn log_and_cancel(order: Order) -> Order {
-    IO.println("Cancelling order {order.id}")   // returns ()
-    { ...order, status: :cancelled }              // this is the block's return value
+    Terminal.println("Cancelling order {order.id}")   // returns ()
+    { ...order, status: :cancelled }                  // this is the block's return value
 }
 ```
 

@@ -240,32 +240,61 @@ These union types are always in scope — no import needed:
 type Bool = :true | :false
 ```
 
-> **`Option<T>` — the v2 truthiness model.** In v2, `Option<T>` is `(T & :true) | :false` — a
-> tagged union where the present value IS the inner type (tagged `:true`), and the absent case IS
-> the `:false` atom. `T?` is syntactic sugar for `Option<T>`.
+> **`Option<T>` and the extended truthiness model.** Bouncelang defines a fixed set of truthy and
+> falsy atom tags for use in `if` conditions:
 >
-> This is different from a `:some/:none` wrapper — there is no `.value` to unwrap. The value
-> itself is the option. Flow-sensitive narrowing in `if` and `match` gives the compiler proof of
-> presence:
+> | Category | Tags |
+> |---|---|
+> | Truthy | `:true`, `:some`, `:ok` |
+> | Falsy | `:false`, `:none`, `:error` |
+>
+> Any value whose type is `(T & truthy_tag) | falsy_tag` can be used directly in an `if` condition.
+> In the truthy branch, the tag is stripped and the inner `T` is accessible directly.
+>
+> This powers three standard optionality/result patterns:
 >
 > ```bounce
-> let name: String? = ...            // (String & :true) | :false
->
+> // Option<T>  =  T?  =  (T & :true) | :false
+> let name: String? = user.nickname
 > if name {
->     // name is narrowed to String & :true — it IS the string, no unwrap needed
->     IO.println("Hello, {name}")
+>     Terminal.println("Hello, {name}")   // name: String (tag stripped)
 > }
 >
-> match name {
->     :false => IO.println("no name")
->     name   => IO.println("Hello, {name}")    // name narrowed to String & :true
+> // Result<T, E>  =  (T & :ok) | (E & :error)
+> let result: (User & :ok) | (DbError & :error) = Database.find_user(id)
+> if result {
+>     serve_user(result)            // result: User (tag stripped)
+> } else {
+>     Log.error("{result.message}") // result: DbError (tag stripped)
+> }
+>
+> // Nullable<T>  =  (T & :some) | :none  (alternative alias — e.g., for JSON null)
+> let value: (String & :some) | :none = json_field
+> if value {
+>     process(value)    // value: String
 > }
 > ```
 >
-> See [02-data-structures.md §3](02-data-structures.md) for the full truthiness and intersection tag model.
+> Flow-sensitive narrowing in `if` and `match` gives the compiler proof of tag presence without any
+> runtime cost. The tag is compile-time metadata only.
+>
+> **`match` also narrows:** In a `match` arm, the compiler strips the matched tag from the type of
+> the binding:
+>
+> ```bounce
+> match name {
+>     :false => Terminal.println("no name")
+>     name   => Terminal.println("Hello, {name}")    // name: String (tag stripped)
+> }
+> ```
+>
+> See [01-primitives.md §3](01-primitives.md) for the full truthiness, `if`/`else`, and `if let`
+> design decisions.
 
-> **There is no `Result<T, E>` in the prelude.** Errors are handled via the `Raise<E>` effect and
-> `try` blocks — see [error-handling.md](error-handling.md). There is no `?` operator.
+> **`Result<T, E>` — no prelude type alias, but the pattern is first-class.** The truthiness
+> model naturally supports a `Result`-like type as `(T & :ok) | (E & :error)`. Projects can
+> declare `type Result<T, E> = (T & :ok) | (E & :error)` and use it with `if`. A stdlib alias is
+> planned for a future cycle (see `decisions-log.md` Known Open Issues).
 
 ---
 

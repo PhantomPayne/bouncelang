@@ -50,7 +50,7 @@ fn process_order(order: Order) -> Order {
     try validate_order(order) {
         valid => { ...valid, status: :processing }
         InvalidOrder { reason } => {
-            IO.println("Rejected: {reason}")
+            Terminal.println("Rejected: {reason}")
             { ...order, status: :cancelled }   // [R1-F4: spec gap — IO return type / unit]
         }
     }
@@ -64,7 +64,7 @@ fn main() {
         status: :pending,
     }
     let result = process_order(o)
-    IO.println("Order {result.id}: {describe_status(result.status)}")
+    Terminal.println("Order {result.id}: {describe_status(result.status)}")
 }
 ```
 
@@ -106,8 +106,8 @@ fn main() {
         Score { player: "Bob",   value: 45 },
         Score { player: "Carol", value: 92 },
     ]
-    IO.println("Winners: {summarise(data)}")
-    IO.println("Top: {top_score(data)}")
+    Terminal.println("Winners: {summarise(data)}")
+    Terminal.println("Top: {top_score(data)}")
 }
 ```
 
@@ -137,8 +137,8 @@ fn read_config(path: String) -> String {
 
 fn app() {
     let raw = read_config("config.toml")
-    IO.println("Config loaded:")
-    IO.println(raw)
+    Terminal.println("Config loaded:")
+    Terminal.println(raw)
 }
 
 // --- world ---
@@ -312,7 +312,7 @@ fn process_batch(records: List<RawRecord>) -> () {
     records |> for_each { r =>              // [R2-F16: ambiguity — for_each vs each naming]
         try run_pipeline(r) {
             _ => ()                          // success arm — unit value
-            PipelineError { ... } => IO.println("Pipeline failed: {PipelineError}")  // [R2-F17: friction — accessing error in catch-all]
+            PipelineError { ... } => Terminal.println("Pipeline failed: {PipelineError}")  // [R2-F17: friction — accessing error in catch-all]
         }
     }
 }
@@ -670,14 +670,14 @@ fn process_jobs(input_path: String) -> () {
                 successes = successes + 1
             }
             :err { error } => {
-                IO.println("Row failed: {error}")
+                Terminal.println("Row failed: {error}")
                 failures = failures + 1
             }
         }
     }
 
     let elapsed = Time.now() - started_at  // [R3-F23: spec gap — Instant arithmetic, result type is Duration?]
-    IO.println("Done: {successes} ok, {failures} failed, {elapsed} elapsed")
+    Terminal.println("Done: {successes} ok, {failures} failed, {elapsed} elapsed")
 }
 
 // ====================================================================
@@ -719,7 +719,7 @@ test fn full_pipeline_counts_correctly() {
         process_jobs("test_input.csv")
     }                                       // [R3-F25: spec gap — how to configure MockFileSystem with test data]
     // Check IO output
-    // [R3-F26: spec gap — how to assert on IO.println output in tests?]
+    // [R3-F26: spec gap — how to assert on Terminal.println output in tests?]
 }
 
 // ====================================================================

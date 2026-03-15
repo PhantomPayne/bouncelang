@@ -56,7 +56,7 @@ let count = Int.parse("42")    // Option<Int>
 
 if count {
     // `count` is narrowed to `Int & :true` — it IS the integer
-    IO.println("Parsed: {count}")
+    Terminal.println("Parsed: {count}")
 }
 ```
 
@@ -183,7 +183,7 @@ let y = math.sin(angle)
 
 ### Boolean Operators
 
-`Bool` values support the standard logical operators:
+`Bool` values support the standard logical operators, using the familiar C-family symbols:
 
 *   **`&&` (AND):** Short-circuit logical AND. `true && false == false`. If the left operand is `false`, the right operand is **not evaluated**.
 *   **`||` (OR):** Short-circuit logical OR. `true || false == true`. If the left operand is `true`, the right operand is **not evaluated**.
@@ -196,33 +196,108 @@ let admin_or_owner = user.role == :admin || user.id == resource.owner_id
 
 Precedence (highest to lowest): `!` > comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`) > `&&` > `||`.
 
-### `if`/`else` as an Expression
+> **Why `&&`/`||` and not `and`/`or`?** The symbols `&&`/`||` are immediately familiar to any
+> developer coming from C, Java, JavaScript, Go, or Rust. `and`/`or` (Python-style) would be
+> foreign to the larger C-family audience. Bouncelang uses `&&`/`||` for maximum recognition.
 
-`if`/`else` is an **expression** in Bouncelang — it returns the value of the taken branch.
+### Truthiness and Flow Narrowing
+
+Beyond plain `Bool`, Bouncelang defines a small fixed set of **truthy** and **falsy** atom tags.
+Any value whose type has the shape `(T & truthy_tag) | falsy_tag` can be used directly in an
+`if` condition:
+
+| Tag category | Atoms |
+|---|---|
+| Truthy | `:true`, `:some`, `:ok` |
+| Falsy | `:false`, `:none`, `:error` |
+
+In the truthy branch the atom tag is stripped — the inner value `T` is available directly:
 
 ```bounce
-// if/else returns the value of the matching branch
-let label = if score >= 80 { "pass" } else { "fail" }
+// Option<T>  =  (T & :true) | :false  =  T?
+let name: String? = user.nickname
+if name {
+    Log.info("nickname is {name}")   // name: String here — :true tag stripped
+}
 
-// Both branches must return the same type
-let abs_val = if x >= 0 { x } else { -x }
+// Result<T, E>  =  (T & :ok) | (E & :error)
+let result: Result<User, DbError> = Database.find_user(id)
+if result {
+    let user = result                 // result: User here — :ok tag stripped
+    serve_user(user)
+}
+```
+
+The compiler performs **flow-sensitive narrowing** — it tracks which tag was tested and removes it
+in the corresponding branch. No runtime cost; the tag is a compile-time annotation.
+
+In the falsy branch the value is narrowed to the falsy tag's associated payload (if any):
+
+```bounce
+// E is accessible in the else branch of a Result check
+let result: Result<User, DbError> = Database.find_user(id)
+if result {
+    serve_user(result)
+} else {
+    // result: DbError here — :error tag stripped
+    Log.error("lookup failed: {result.message}")
+}
+```
+
+**`if` without `else`:** When no `else` branch is provided, the expression type is `()` (unit).
+The falsy case is silently skipped:
+
+```bounce
+if user.admin {
+    Terminal.println("Admin access granted")
+}
+// type: () — no else needed
+```
+
+**`if let` — not in V1.** Explicit binding inside the condition (`if let :some { v } = expr`) is
+not supported in Bouncelang V1. The flow-narrowing model above covers the common cases. `match`
+handles the rest:
+
+```bounce
+// Instead of if let:
+match user.nickname {
+    nick => Terminal.println("nickname: {nick}")    // :true tag stripped
+    :false => ()
+}
+```
+
+### `if`/`else` as an Expression
+
+`if`/`else` is an **expression** — it returns the value of the taken branch.
+
+The two branches must return **compatible** (unifiable) types. This means:
+
+- Both branches return the same concrete type → result is that type.
+- One branch returns a union variant and the other returns a different union variant of the same
+  union → result is the union type.
+- One branch calls `raise` or `panic` (`Never` type) → the other branch's type wins.
+
+```bounce
+// Same concrete type
+let label = if score >= 80 { "pass" } else { "fail" }        // String
+
+// Union arms — both sides are variants of the same union
+type Status = :active | :inactive
+let status = if user.enabled { :active } else { :inactive }  // Status
+
+// Optional pattern — produce an Option<T> inline
+let display_name = if user.nickname { user.nickname } else { user.name }
+
+// Never in one branch — other branch's type wins
+let safe = if x >= 0 { x } else { panic("negative") }        // Int
 
 // In pipelines
 scores |> map { s => if s >= 80 { :pass } else { :fail } }
 ```
 
-If an `if` has no `else` branch, its type is `()` (unit) — it is evaluated only for the side
-effect and the result is discarded:
-
-```bounce
-if user.admin {
-    IO.println("Admin access granted")
-}
-// type: () — no else needed when the result is not used
-```
-
-Both branches of an `if`/`else` expression must return the same type. A branch that calls `raise`
-or `panic` satisfies any type (`Never`).
+> **Branches returning completely different types** (e.g., `if x { 42 } else { "hello" }`) are a
+> compile error. The compiler cannot safely unify `Int` and `String` into a useful type. If you
+> need a heterogeneous result, use a union: `if x { :left { v: 42 } } else { :right { v: "hello" } }`.
 
 ---
 

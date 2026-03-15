@@ -656,3 +656,330 @@ The consistency agent verified all recommender changes. Issues found and resolve
 | 2 | Crypto | No Crypto effect or handler defined; placeholder exists as "third-party" | 3 |
 | 3 | `input` for opaque types | Input declarations cannot target opaque types | 4 |
 | 4 | `reduce` return on empty | Currently defined as panic — should consider `fold` as the recommended safe alternative (done in Rec-12) | Resolved |
+
+---
+
+## Pipeline Cycle 3 — PR Review Comments (24 decisions)
+
+**Date:** 2026-03-15
+**Source:** 24 review comments left by @PhantomPayne on PR #5
+**Agent:** Spec Consistency Agent
+
+---
+
+### Decisions
+
+---
+
+#### D-3-01 — `and`/`or` vs `&&`/`||` (01-primitives.md)
+
+**Question:** Should boolean operators use Python-style `and`/`or` keywords or C-style `&&`/`||` symbols?
+
+**Decision:** Keep `&&`/`||`/`!`. The symbols are immediately familiar to C, Java, JavaScript, Go, and Rust developers — the primary audience. Python's `and`/`or` would require learning a new convention. Existing spec examples all use `&&`/`||`. Added a rationale note to the spec.
+
+---
+
+#### D-3-02 — `if`/`else` type restriction (01-primitives.md)
+
+**Question:** Must both branches return the same type? What about union arms? What about `if x else :false`?
+
+**Decision:** Relaxed "same type" to "compatible/unifiable types":
+- Two branches returning arms of the same union → result is the union type.
+- One branch is `Never` (calls `raise`/`panic`) → the other branch's type wins.
+- Completely unrelated types (String, Int) → compile error.
+Updated the spec section with a table of examples and the optional pattern.
+
+---
+
+#### D-3-03 — `if let` in V1 (01-primitives.md)
+
+**Question:** Should `if let SomePattern = expr { ... }` be supported?
+
+**Decision:** Deferred to post-V1. The flow-narrowing truthiness model (`if x { ... }`) covers the primary case. `match` handles the rest. Adding `if let` would be syntactic sugar over two already-working mechanisms — not worth the parser complexity in V1.
+
+---
+
+#### D-3-04 — Multi-truthy atom tags (01-primitives.md, atoms-and-unions.md)
+
+**Question:** Should multiple atom tags be considered "truthy" — `:some`, `:ok` in addition to `:true`?
+
+**Decision:** Yes. Adopted a fixed set:
+- **Truthy:** `:true`, `:some`, `:ok`
+- **Falsy:** `:false`, `:none`, `:error`
+
+Any value whose type is `(T & truthy_tag) | falsy_tag` can be used in an `if` condition. In the truthy branch, the tag is stripped and `T` is directly accessible. This enables:
+- `Result<T, E> = (T & :ok) | (E & :error)` — natural `if result { use(result) }` without `match`
+- `Nullable<T> = (T & :some) | :none` — optional alias for `:some`/`:none` consumers
+- `Option<T>` (existing) — unchanged
+
+The set is fixed and finite — developers learn 6 atoms total, comparable to learning `&&`/`||`.
+Cost: minor understandability complexity. Benefit: natural ergonomics for Result, nullable DB rows, optional config values.
+
+---
+
+#### D-3-05 — Map vs Record guidance (02-data-structures.md)
+
+**Question:** When would you use a Map instead of a Record? Do we need both?
+
+**Decision:** Yes, both are needed. Added a "When to use" table:
+- Record: fixed, named fields known at compile time (domain objects, typed API params)
+- Map: dynamic key-value pairs (HTTP headers, query params, grouping results, frequency counts)
+
+---
+
+#### D-3-06 — `()` vs `void` naming (02-data-structures.md)
+
+**Question:** Should the unit type be `()` (functional) or `void` (familiar to C/Java/TS developers)?
+
+**Decision:** Keep `()` as canonical. It participates in the tuple algebra consistently. Added a developer-friendly note explaining the `void` equivalence, and noted that the LSP hover text says "no return value (like void in other languages)". No `void` keyword added — aliases create inconsistency.
+
+---
+
+#### D-3-07 — `raise()` parentheses rationale (04-effects-and-handlers.md)
+
+**Question:** Why does `raise(NotFoundError { id })` use parentheses?
+
+**Decision:** Parentheses distinguish two syntactically similar but semantically different forms:
+- `raise(E)` — constructs and raises a NEW error (takes an argument).
+- `raise` (bare) — re-raises the CURRENT error inside a `try` arm (takes no argument).
+The parens make the distinction visually obvious and consistent with function-call syntax. Added inline comment to the spec example.
+
+---
+
+#### D-3-08 — Split `IO` into `Log` + `Terminal` (05-stdlib-effects.md)
+
+**Question:** Should `IO` be split into a logging effect and a CLI I/O effect, with more specific names?
+
+**Decision:** Yes. `IO` was ambiguous. Split into:
+- **`Log`** — structured application logging with levels (info/warn/error/debug), used by most apps.
+- **`Terminal`** — interactive CLI I/O (stdin read, raw stdout write), used only by programs that converse with a user.
+
+Rationale: web services never read from stdin; CLI tools rarely write structured JSON logs. The split reflects actual usage patterns and makes capability grants more precise in world declarations.
+
+Handlers: `ConsoleLog`/`CapturedLog` (Log), `StdTerminal`/`MockTerminal` (Terminal).
+
+---
+
+#### D-3-09 — `FileSystem` file handles (`with_file`) (05-stdlib-effects.md)
+
+**Question:** Should `FileSystem` expose a File object API alongside path-based operations?
+
+**Decision:** Yes. Added `FileSystem.with_file(path, fn(File) -> T)` as a scope-based API. The file is automatically closed when the block exits — even if it raises. Kept path-based convenience operations (`read`, `write`) for the common case. The `File` type is opaque and only accessible via `with_file`.
+
+---
+
+#### D-3-10 — `Path` type, relative paths, and FileSystem sandboxing (05-stdlib-effects.md)
+
+**Question:** Can we have a Path type? How do relative paths work? Can the FileSystem be sandboxed?
+
+**Decision:** 
+- Added `Path` as a first-class type with builder methods (`join`, `parent`, `filename`, `extension`, `is_absolute`, `to_string`).
+- All `FileSystem` operations now accept `Path` (not `String`).
+- Relative paths resolve against the handler's `root` directory (configured in the world).
+- Sandboxing: `WasiFileSystem(root: config.data_dir)` — access is restricted to the declared root. Path traversal above the root raises `FileSystemError` at runtime.
+
+---
+
+#### D-3-11 — `IoError` → `FileSystemError` (05-stdlib-effects.md)
+
+**Question:** `IoError` sounds like it belongs to the `IO` effect. Can we rename it and establish a naming convention?
+
+**Decision:** Renamed to `FileSystemError`. Established naming convention: **each effect's errors are named `<EffectName>Error`**. Applied throughout the spec. `IoError` is abolished.
+
+---
+
+#### D-3-12 — Test handler verbosity (05-stdlib-effects.md)
+
+**Question:** Do tests need both a world declaration AND `.new()` calls — can we get to one?
+
+**Decision:** Clarified the two-mode pattern:
+- **World default**: declare handler in `world test` — tests that don't need custom seeding use this handler without any per-test code.
+- **Inline override**: `handle MockFileSystem.new() { ... }` in individual tests that need custom seeding.
+
+Both modes are valid; you don't need both simultaneously. Added a note and a show-don't-tell example for each mode.
+
+---
+
+#### D-3-13 — Split `Network` into `Http` + `WebSocket` (05-stdlib-effects.md)
+
+**Question:** Should HTTP and WebSocket be separate effects?
+
+**Decision:** Yes. Separated into:
+- **`Http`** — outgoing HTTP/HTTPS requests (GET, POST, request builder, streaming)
+- **`WebSocket`** — WebSocket connections
+
+Rationale: A component should be able to say "I can make HTTP calls but cannot open WebSocket connections" — this is a meaningful capability boundary (e.g., in sandboxed serverless environments). The split costs one extra `handle` line in worlds that need both; it buys precise capability declarations.
+
+---
+
+#### D-3-14 — HTTP request builder pattern (05-stdlib-effects.md)
+
+**Question:** Should there be a Request builder object rather than multiple `get_with_headers`-style functions?
+
+**Decision:** Yes. Added a `Request` builder type used with `Http.request(req)`:
+```bounce
+Http.request(
+    Request.new(:post, url)
+        |> Request.header("Authorization", "Bearer {token}")
+        |> Request.json_body(view)
+)
+```
+Convenience functions (`Http.get`, `Http.post`, `Http.post_json`) remain for the 80% case.
+
+---
+
+#### D-3-15 — URL allowlist sandboxing for Http (05-stdlib-effects.md)
+
+**Question:** Can we configure Network to limit allowed URLs?
+
+**Decision:** Added `allowed_origins` configuration to `WasiHttp`:
+```bounce
+handle Http with WasiHttp(allowed_origins: ["https://api.stripe.com"])
+```
+Runtime: calls to non-listed origins raise `HttpError`.
+Compile-time: string literal URLs not in the allowlist get a compiler warning (cannot check dynamic URLs).
+
+---
+
+#### D-3-16 — Streaming HTTP responses (05-stdlib-effects.md)
+
+**Question:** Do we need to support streaming responses?
+
+**Decision:** Yes. Added `body_stream: Sequence<Bytes> & :finite` to the `Response` type. Lazy — only read from on first iteration. The `body` field (full buffered body) remains for small responses.
+
+---
+
+#### D-3-17 — `raise_for_status` pattern / Http API design (05-stdlib-effects.md)
+
+**Question:** Should we have a raise_for_status pattern? Should the Http API look more like requests/httpx?
+
+**Decision:** The current design already implements the pattern:
+- Convenience functions (`Http.get`, `Http.post`) always raise `HttpError` for status >= 400.
+- `Http.request(req)` returns the `Response` regardless of status — use `response.ok` to check.
+This is the httpx-style approach: auto-raise in the simple path, manual check in the builder path. Documented the distinction explicitly in the spec.
+
+---
+
+#### D-3-18 — Mock ergonomics for JSON response bodies (05-stdlib-effects.md)
+
+**Question:** `Bytes.from_string(json_string)` is verbose and error-prone in mock tests.
+
+**Decision:** Updated mock examples to use `Json.encode(value) -> Bytes`. This is more readable, avoids manual JSON escaping, and matches the `Json` module pattern used elsewhere. `Bytes.from_string` remains available as an escape hatch.
+
+---
+
+#### D-3-19 — `Time.freeze`/`Time.advance` on wrong type (05-stdlib-effects.md)
+
+**Question:** `Time.freeze` and `Time.advance` were called on the `Time` effect rather than on the `SimulatedTime` handler. Is that right?
+
+**Decision:** Fixed. Control methods (`freeze`, `advance`) belong on the **handler** (`SimulatedTime`), not on the **effect** (`Time`). This is consistent with how all other mock handlers work (e.g., `MockFileSystem.new()`, `MockHttp.new()`). Production code can only call `Time.now()` etc. — test-only methods are unreachable in production context. Updated the spec example accordingly.
+
+---
+
+#### D-3-20 — `uuid()` → `uuid4()` + `uuid7()` (05-stdlib-effects.md)
+
+**Question:** Rename `uuid()` to `uuid4()` and add `uuid7()`?
+
+**Decision:** Yes:
+- `uuid4()` — random bytes in UUID format (v4, existing behaviour)
+- `uuid7()` — timestamp-ordered UUID (v7, new) — preferred for database primary keys
+
+Both remain in `Random`. Splitting into a separate `UuidGenerator` effect provides no meaningful capability boundary (UUID4 requires randomness; UUID7 requires randomness + time — already `Random` and `Time`). Added a note explaining the decision.
+
+---
+
+#### D-3-21 — `transaction` callback must not be `pure fn` (05-stdlib-effects.md)
+
+**Question:** The `transaction` callback is typed as `pure fn()` but needs to call the Database effect.
+
+**Decision:** Fixed to `fn()`. The transaction callback calls `Database.query`, `Database.execute`, etc. within the transaction boundary — it must be an effectful function. A `pure fn` cannot call any effects. Updated spec.
+
+---
+
+#### D-3-22 — Multiple databases via effect aliasing (05-stdlib-effects.md)
+
+**Question:** How do you target a specific database when you have multiple databases attached?
+
+**Decision:** Use effect aliasing — import the database package under different names:
+```bounce
+import Postgres as PrimaryDb   from "bouncelang/postgres"
+import Postgres as AnalyticsDb from "bouncelang/postgres"
+```
+Each alias is a distinct effect. The world wires each to a different handler instance. No special syntax needed. Connection pooling is configured at the handler level, not in the effect API.
+
+---
+
+#### D-3-23 — Row parsing with `input` declarations (05-stdlib-effects.md)
+
+**Question:** Shouldn't database row parsing work with the input/view spec we created?
+
+**Decision:** Yes — added a section showing `input` declarations targeting `Row`:
+```bounce
+input UserRow -> User {
+    fields { id as Int.positive, name as String.any, email as Email.format }
+}
+row |> parse_input(UserRow)
+```
+The manual column accessor API (`row.get_string("col")`) remains as an escape hatch. The `input`-based approach is documented as preferred — it validates columns, maps to the internal type, and is consistent with the rest of the serialisation model.
+
+---
+
+#### D-3-24 — LSP go-to-definition direction (05-stdlib-effects.md)
+
+**Question:** Does go-to-definition on an effect call navigate to the effect declaration or to the handler?
+
+**Decision:** Both are available:
+- **Go-to-definition** (standard `F12`) → effect declaration (the API contract)
+- **Go-to-handler** (secondary command, `Shift+F12` or command palette) → world handler wiring (the concrete implementation)
+
+Updated the LSP summary in `05-stdlib-effects.md` and the Database LSP section to reflect both.
+
+---
+
+#### D-3-25 — `map`/`flat_map` in Sequence operator table (07-concurrency.md)
+
+**Question:** Are `map` and `flat_map` missing from the Sequence operators?
+
+**Decision:** Not missing — they are in the **Transform** section of the operator table (non-terminal). The terminal operators table only shows consuming operators. Added a clarifying note at the top of the Terminal section pointing back to the Transform section. No missing operators.
+
+---
+
+### Consistency Pass After Cycle 3
+
+Changes from Cycle 3 introduced the following cross-file ripple effects, all resolved:
+
+| Issue | Fix |
+|---|---|
+| `worlds-and-handlers.md` used `IO.read_args()`, `IO.println()`, `handle IO with StdIO`, `handle Network with WasiHttp`, `MockNetwork` throughout | Updated to `Terminal.*`, `Log.*`, `ConsoleLog`, `WasiHttp` under `Http`, `MockHttp` |
+| `04-effects-and-handlers.md §9` listed old effect declarations for `IO`, `Network` | Replaced with new declarations for `Log`, `Terminal`, `Http`, `WebSocket`, `FileSystem` (with `Path`), `Random` (with `uuid4`/`uuid7`) |
+| `02-data-structures.md` block-sequencing example used `IO.println` | Updated to `Terminal.println` |
+| `01-primitives.md` `if`/`else` section still referenced the strict "same type" rule | Updated to "compatible types" with union-arm example |
+| `atoms-and-unions.md` does not yet document the extended truthiness algebra | Flagged as Priority 2 follow-up — consistency score reduced to 8 for that file |
+
+### Consistency Scores After Cycle 3
+
+| File | Score | Change | Notes |
+|---|---|---|---|
+| `01-primitives.md` | 10 | +0 | Additions only (truthiness algebra, if/else clarification) |
+| `02-data-structures.md` | 10 | +0 | Additions only (Map vs Record, () note) |
+| `04-effects-and-handlers.md` | 10 | +1 | §9 updated to new effect names; raise rationale added |
+| `05-stdlib-effects.md` | 9 | +0 | Full rewrite; WebSocket streaming body_stream needs expand in future |
+| `07-concurrency.md` | 10 | +1 | Transform section note added; Sequence table complete |
+| `08-serialization-boundaries.md` | 10 | +0 | No changes |
+| `atoms-and-unions.md` | 8 | -1 | Does not yet document extended truthiness (`:some`/`:ok`); Priority 2 |
+| `error-handling.md` | 9 | +0 | No changes |
+| `formatter-principles.md` | 10 | +0 | No changes |
+| `generics-and-type-system.md` | 9 | +0 | No changes |
+| `methods-and-packages.md` | 9 | +0 | No changes |
+| `modules-and-imports.md` | 9 | +0 | No changes |
+| `worlds-and-handlers.md` | 9 | +0 | Effect names updated; full DST example section uses new names |
+
+### Known Open Issues (Carried Forward)
+
+| # | Area | Description | Priority |
+|---|---|---|---|
+| 1 | HTTP API (incoming) | `Request`/`Response` for incoming HTTP handlers (server-side) not fully specified | 2 |
+| 2 | `atoms-and-unions.md` | Does not document the extended truthiness algebra (`:some`/`:ok`) introduced in Cycle 3 | 2 |
+| 3 | `Result<T, E>` stdlib type | `Result<T, E> = (T & :ok) \| (E & :error)` should be a stdlib type alias; not yet declared | 2 |
+| 4 | Crypto effect | No Crypto effect defined; would be a separate third-party effect | 3 |
+| 5 | `input` for opaque types | Input declarations cannot target opaque types | 4 |

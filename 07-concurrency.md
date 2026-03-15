@@ -157,6 +157,12 @@ All operators are lazy (return a new Sequence) unless marked as terminal.
 | `combine_latest` | `(Sequence<T>, Sequence<U>) -> Sequence<(T, U)>` | Latest from each when either emits |
 
 ### Terminal (require `:finite`)
+
+> **Non-terminal operators** (`map`, `flat_map`, `filter`, `scan`, `debounce`, etc.) are in the
+> **Transform**, **Filter**, **Time**, **Combine**, and **Utility** sections above — they return a
+> new `Sequence` rather than consuming it. The operators below **consume** a finite sequence and
+> produce a single value.
+
 | Operator | Signature | Description |
 |---|---|---|
 | `collect` | `(Sequence<T> & :finite) -> List<T>` | Gather all values into a list |
@@ -289,7 +295,7 @@ Concurrency.scope { s =>
         s.detach {
             try handle_connection(conn) {
                 _ => ()
-                err => IO.eprintln("connection error: {err}")
+                err => Terminal.eprintln("connection error: {err}")
             }
         }
     }
@@ -364,8 +370,8 @@ let b = s.spawn { strategy_b() }
 // Wait for whichever finishes first
 for event in select(a: a, b: b) {
     match event {
-        :a { result } => IO.print("A won: {result}")
-        :b { result } => IO.print("B won: {result}")
+        :a { result } => Terminal.println("A won: {result}")
+        :b { result } => Terminal.println("B won: {result}")
     }
 }
 ```
@@ -426,12 +432,12 @@ The `pure` annotation prevents:
 ```bounce
 // COMPILE ERROR: closure is not pure
 counter.update { n =>
-    let data = Network.get(url)     // effect inside pure closure!
+    let data = Http.get(url)     // effect inside pure closure!
     n + data.value
 }
 
 // CORRECT: do effects outside, update with the result
-let data = Network.fetch(url)
+let data = Http.get(url)
 counter.update { n => n + data.value }
 ```
 
@@ -547,7 +553,7 @@ let sub: Sequence<String> = announcements.subscribe()
 // Each call to subscribe() creates a new independent subscription
 // Use in for loops, pipelines, select — it's a Sequence
 for msg in sub {
-    IO.print(msg)
+    Terminal.print(msg)
 }
 ```
 
@@ -705,7 +711,7 @@ Bounded parallel map over a sequence:
 
 ```bounce
 urls
-    |> concurrent_map(max: 10) { url => Network.get(url) }
+    |> concurrent_map(max: 10) { url => Http.get(url) }
     |> collect
 ```
 
@@ -717,7 +723,7 @@ Retry with configurable backoff:
 
 ```bounce
 let result = retry(max: 5, backoff: :exponential) {
-    Network.get(flaky_url)
+    Http.get(flaky_url)
 }
 ```
 
@@ -801,11 +807,11 @@ An unhandled error in a linked task cancels all siblings and propagates to the s
 
 ```bounce
 let result = Concurrency.scope { s =>
-    let a = s.spawn { fetch_users() }       // raises NetworkError
+    let a = s.spawn { fetch_users() }       // raises HttpError
     let b = s.spawn { fetch_posts() }       // cancelled when a fails
     (a.join(), b.join())
 }
-// NetworkError propagates out of the scope
+// HttpError propagates out of the scope
 ```
 
 ### Detached Tasks (`detach`)
@@ -829,8 +835,8 @@ let task = s.spawn { might_fail() }
 try {
     let result = task.join()
 } catch {
-    NetworkError => fallback()
-    Cancelled => IO.eprintln("task was cancelled")
+    HttpError => fallback()
+    Cancelled => Terminal.eprintln("task was cancelled")
 }
 ```
 
@@ -840,7 +846,7 @@ If a sequence inside `select` raises an error, the error propagates through the 
 
 ```bounce
 for event in select(msg: ws.messages, data: flaky_stream) {
-    // If flaky_stream raises NetworkError, it propagates here
+    // If flaky_stream raises HttpError, it propagates here
     match event { ... }
 }
 ```

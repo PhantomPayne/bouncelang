@@ -69,6 +69,9 @@ fn get_user(id: Int) -> User {
     let row = db_lookup(id)
     if row == :false {
         raise(NotFoundError { id })
+        // raise(E) — with parens — constructs and raises a new error.
+        // bare `raise` (no parens) re-raises the current error inside a `try` arm.
+        // The parens make the two forms visually distinct and consistent with function calls.
     }
     parse_user(row)
 }
@@ -114,10 +117,10 @@ Standard effects are declared in the standard library. Third-party effects are d
 
 ```bounce
 // Standard library declaration (std/network)
-effect Network {
+effect Http {
     fn get(url: String) -> Response
     fn post(url: String, body: Bytes) -> Response
-    fn websocket(url: String) -> WebSocket
+
 }
 
 // Standard library declaration (std/time)
@@ -255,7 +258,7 @@ A `pure fn` guarantees that a function performs no effects. The compiler enforce
 |---|---|
 | All computation | Effect calls (Network, FileSystem, etc.) |
 | `Raise<E>` (error control flow) | `Time.now()`, `Random.int()` |
-| `Panic` (unrecoverable) | `IO.print()`, `FileSystem.read()` |
+| `Panic` (unrecoverable) | `Terminal.print()`, `FileSystem.read()` |
 | Memory allocation | `Concurrency.scope { }` |
 | Calling other pure functions | Calling non-pure functions |
 
@@ -323,9 +326,9 @@ Effects are wired to implementations via handlers in world blocks. A handler con
 
 ```bounce
 world cli {
-    handle Network with WasiHttp
+    handle Http    with WasiHttp
     handle FileSystem with WasiFilesystem
-    handle IO with WasiCli
+    handle Terminal with StdTerminal
     handle Time with WasiClocks
     handle Random with WasiRandom
     handle Concurrency with WasiAsync
@@ -344,7 +347,7 @@ world cli {
 **Standard WASI Handlers**: Map directly to standardized WASI interfaces. These are provided by the runtime (wasmtime, Spin, etc.).
 
 ```bounce
-handle Network with WasiHttp
+handle Http    with WasiHttp
 handle FileSystem with WasiFilesystem
 ```
 
@@ -392,7 +395,7 @@ If no handler is installed for an effect that the code requires, this is a compi
 
 ```bounce
 world cli {
-    // Missing: handle Network
+    // Missing: handle Http
     entry main    // ERROR if main's call graph uses Network
 }
 ```
@@ -613,68 +616,96 @@ The compiler knows which is which based on whether the target is an `effect` or 
 
 ## 9. Standard Effects Reference
 
-### Network
+The complete API for each standard effect — operations, error types, DST handlers, LSP behaviour,
+and Wasm mapping — is specified in `05-stdlib-effects.md`. This section provides a compact
+reference of the effect declarations only.
+
+### Log
 
 ```bounce
-effect Network {
-    fn get(url: String) -> Response
-    fn post(url: String, body: Bytes) -> Response
-    fn put(url: String, body: Bytes) -> Response
-    fn patch(url: String, body: Bytes) -> Response
-    fn delete(url: String) -> Response
-    fn request(req: Request) -> Response
-    fn websocket(url: String) -> WebSocket
-    fn listen(addr: String) -> Listener
+effect Log {
+    fn info(msg: String) -> ()
+    fn warn(msg: String) -> ()
+    fn error(msg: String) -> ()
+    fn debug(msg: String) -> ()
+    fn info_fields(msg: String, fields: Map<String, String>) -> ()
+    fn warn_fields(msg: String, fields: Map<String, String>) -> ()
+    fn error_fields(msg: String, fields: Map<String, String>) -> ()
+    fn debug_fields(msg: String, fields: Map<String, String>) -> ()
 }
 ```
 
-Maps to `wasi:http/outgoing-handler` and `wasi:http/incoming-handler`.
+Structured application logging. Used by most apps — web services, background workers, CLI tools
+that log progress. Maps to `wasi:cli/stdout` in structured format (default: JSON or logfmt).
+
+### Terminal
+
+```bounce
+effect Terminal {
+    fn print(msg: String) -> ()
+    fn println(msg: String) -> ()
+    fn eprintln(msg: String) -> ()
+    fn read_line() -> String?
+    fn read_all() -> String
+    fn read_args() -> List<String>
+}
+```
+
+Interactive CLI I/O — raw stdin/stdout for programs that communicate directly with the user.
+Use for REPLs, TUI helpers, interactive prompts. Maps to `wasi:cli/stdin`, `wasi:cli/stdout`,
+`wasi:cli/stderr`.
+
+### Http
+
+```bounce
+effect Http {
+    fn get(url: String) -> Response
+    fn post(url: String, body: Bytes) -> Response
+    fn post_json<T>(url: String, body: View<T>) -> Response
+    fn request(req: Request) -> Response     // never raises on 4xx/5xx
+}
+```
+
+Outgoing HTTP/HTTPS requests. Raises `HttpError` for status >= 400 (convenience methods only;
+`request` returns `Response` regardless of status). Maps to `wasi:http/outgoing-handler`.
+
+### WebSocket
+
+```bounce
+effect WebSocket {
+    fn connect(url: String) -> WsConnection
+}
+```
+
+WebSocket connections. Separate from `Http` so worlds can declare one capability without the
+other. Maps to `wasi:http/outgoing-handler` (websocket upgrade).
 
 ### FileSystem
 
 ```bounce
 effect FileSystem {
-    fn open(path: String) -> File
-    fn read(path: String) -> String
-    fn read_bytes(path: String) -> Bytes
-    fn write(path: String, content: String)
-    fn write_bytes(path: String, content: Bytes)
-    fn append(path: String, content: String)
-    fn list(path: String) -> List<DirEntry>
-    fn exists(path: String) -> Bool
-    fn remove(path: String)
-    fn create_dir(path: String)
-    fn metadata(path: String) -> FileMetadata
+    fn read(path: Path) -> String
+    fn read_bytes(path: Path) -> Bytes
+    fn write(path: Path, content: String) -> ()
+    fn append(path: Path, content: String) -> ()
+    fn list(path: Path) -> List<Path>
+    fn exists(path: Path) -> Bool
+    fn open_lines(path: Path) -> Sequence<String> & :finite
+    fn open_bytes(path: Path) -> Sequence<Bytes> & :finite
+    fn with_file<T>(path: Path, f: fn(File) -> T) -> T
 }
 ```
 
-Maps to `wasi:filesystem/types` and `wasi:filesystem/preopens`.
-
-### IO
-
-```bounce
-effect IO {
-    fn print(msg: String)
-    fn println(msg: String)
-    fn eprint(msg: String)
-    fn eprintln(msg: String)
-    fn read_line() -> String
-    fn lines() -> Sequence<String> & :infinite
-    fn args() -> List<String>
-    fn env(key: String) -> String?
-}
-```
-
-Maps to `wasi:cli/stdin`, `wasi:cli/stdout`, `wasi:cli/stderr`, `wasi:cli/environment`.
+Raises `FileSystemError` on failure. Maps to `wasi:filesystem/types`.
 
 ### Time
 
 ```bounce
 effect Time {
     fn now() -> Instant
-    fn datetime_now() -> Datetime
+    fn now_utc() -> Datetime
     fn local_timezone() -> Timezone
-    fn sleep(duration: Duration)
+    fn sleep(duration: Duration) -> ()
     fn after(duration: Duration) -> Sequence<Instant> & :finite
     fn every(interval: Duration) -> Sequence<Instant> & :infinite
 }
@@ -688,10 +719,9 @@ Maps to `wasi:clocks/monotonic-clock` and `wasi:clocks/wall-clock`.
 effect Random {
     fn int(min: Int, max: Int) -> Int
     fn float() -> Float
-    fn bytes(count: Int) -> Bytes
-    fn bool() -> Bool
-    fn choice<T>(items: List<T>) -> T
-    fn shuffle<T>(items: List<T>) -> List<T>
+    fn bytes(n: Int) -> Bytes
+    fn uuid4() -> String
+    fn uuid7() -> String
 }
 ```
 
@@ -844,7 +874,7 @@ export world type game_script_sandbox {
 
 // User code targeting the sandbox
 world my_mod extends game_script_sandbox {
-    // Cannot add: handle Network with WasiHttp
+    // Cannot add: handle Http    with WasiHttp
     // ERROR: Network is denied by game_script_sandbox
     entry tick
 }

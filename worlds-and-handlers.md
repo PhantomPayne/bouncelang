@@ -59,7 +59,7 @@ world server {
 
     entry app
 
-    handle Network  with WasiHttp
+    handle Http     with WasiHttp
     handle Database with Postgres(config.database_url)
     handle Logger   with StdoutLogger(level: config.log_level)
 }
@@ -87,12 +87,12 @@ world server {
 Handlers are standalone declarations that provide an implementation for an effect. They live in regular `.bounce` files and can be exported via `package.bounce`.
 
 ```bounce
-handler RealNetwork(base_url: String): Network {
+handler RealNetwork(base_url: String): Http {
     get(url)        => resume(http_get(base_url + url))
     post(url, body) => resume(http_post(base_url + url, body))
 }
 
-handler MockNetwork: Network {
+handler MockHttp: Http {
     get(url)        => resume(Bytes.from("mock response"))
     post(url, body) => resume(Bytes.from("ok"))
 }
@@ -153,7 +153,7 @@ Each world declares one entry point. The entry function needs **no effect annota
 ```bounce
 world server {
     entry app
-    handle Network  with WasiHttp
+    handle Http     with WasiHttp
     handle Database with Postgres(config.database_url)
 }
 // Compiler infers: `app` transitively requires Network, Database, Logger
@@ -173,7 +173,7 @@ world production {
     config { database_url: String }
 
     entry app
-    handle Network  with WasiHttp
+    handle Http     with WasiHttp
     handle Database with Postgres(config.database_url)
     handle Logger   with StdoutLogger(level: :info)
     handle Time     with SystemTime
@@ -199,7 +199,7 @@ world server extends base {
         log_level: :debug | :info | :warn | :error = :info
     }
     entry app
-    handle Network with WasiHttp
+    handle Http    with WasiHttp
 }
 
 world worker extends base {
@@ -246,7 +246,7 @@ world declaration itself. Different component types expect different signatures:
 
 | Component type | Entry signature | Notes |
 |---|---|---|
-| CLI (`wasi:cli/command`) | `fn main() -> ()` | Reads args via `IO.read_args()` |
+| CLI (`wasi:cli/command`) | `fn main() -> ()` | Reads args via `Terminal.read_args()` |
 | HTTP handler (`wasi:http/incoming-handler`) | `fn handle_request(req: Request) -> Response` | `Request` and `Response` from `std/http` |
 | Background worker (queue trigger) | `fn process(job: Bytes) -> ()` | Format is queue-specific |
 | Cron / timer trigger | `fn tick(at: Datetime) -> ()` | |
@@ -259,13 +259,13 @@ the expected target:
 // ❌ Compile error: world `server` targets wasi:http but entry `main` has signature fn() -> ()
 world server {
     entry main         // wrong signature for HTTP target
-    handle Network with WasiHttp
+    handle Http    with WasiHttp
 }
 
 // ✅ Correct: handle_request has the right signature for HTTP
 world server {
     entry handle_request
-    handle Network with WasiHttp
+    handle Http    with WasiHttp
 }
 ```
 
@@ -282,7 +282,7 @@ world server {
         log_level: :debug | :info | :warn | :error = :info
     }
     entry handle_request
-    handle Network with WasiHttp
+    handle Http    with WasiHttp
     handle Logger  with StdoutLogger(level: config.log_level)
 }
 
@@ -309,11 +309,11 @@ For library exports, the compiler infers effects and the LSP offers a quick-fix 
 // You write:
 pub fn fetch_user(id: UserId) -> User { ... }
 
-// LSP inlay hint: with Network, Raise<ParseError>
+// LSP inlay hint: with Http, Raise<ParseError>
 // Quick-fix action: "Make effects explicit" →
 
 pub fn fetch_user(id: UserId) -> User
-    with Network, Raise<ParseError> { ... }
+    with Http, Raise<ParseError> { ... }
 ```
 
 The explicit annotation lists **the effects this function produces** — callers' effects bubble up naturally through inference.
@@ -338,7 +338,7 @@ world spin {
         database_url: String
     }
     entry handle_request
-    handle Network  with WasiHttp
+    handle Http     with WasiHttp
     handle Database with SpinSqlite("default")
 }
 ```
@@ -373,19 +373,20 @@ world cli {
         verbose: Bool = false
     }
     entry main
-    handle IO         with StdIO
+    handle Log       with ConsoleLog
+    handle Terminal  with StdTerminal
     handle FileSystem with RealFileSystem
 }
 ```
 
 ```bounce
 fn main() {
-    let args = IO.read_args()
+    let args = Terminal.read_args()
 
     args.files
         |> map { path => FileSystem.read_file(path) }
         |> map(transform)
-        |> each { result => IO.println(result) }
+        |> each { result => Terminal.println(result) }
 }
 ```
 
@@ -424,7 +425,7 @@ world test {
     }
     entry test_runner
     handle Database with InMemoryDb
-    handle Network  with MockNetwork
+    handle Http     with MockHttp
     handle Time     with SimulatedTime
     handle Queue    with InMemoryQueue
 }
@@ -434,8 +435,8 @@ No test-specific handler boilerplate in test files. Individual tests can still o
 
 ```bounce
 test fn email_sends_on_transfer() {
-    let spy = spy(Network)
-    handle MockNetwork(spy) {
+    let spy = spy(Http)
+    handle MockHttp(spy) {
         transfer(from: alice, to: bob, amount: 100)
     }
     assert(spy.called(:post, times: 1))
@@ -476,11 +477,12 @@ world test {
     }
     entry test_runner
     handle Database with InMemoryDb          // deterministic in-memory state
-    handle Network  with MockNetwork         // no real HTTP, explicit mock configuration
+    handle Http     with MockHttp         // no real HTTP, explicit mock configuration
     handle Time     with SimulatedTime       // virtual clock — freeze and advance
     handle Random   with SeededRandom        // deterministic PRNG from seed
     handle Queue    with InMemoryQueue       // synchronous delivery
-    handle IO       with CapturedIO          // captures stdout/stderr, feeds mock stdin
+    handle Log      with CapturedLog
+    handle Terminal with MockTerminal          // captures stdout/stderr, feeds mock stdin
 }
 ```
 
@@ -526,11 +528,11 @@ test fn retries_on_network_failure() {
     assert_eq(call_count.value, 2)    // one failure + one success
 }
 
-handler FailFirstNetwork(count: State<Int>): Network {
+handler FailFirstNetwork(count: State<Int>): Http {
     get(url) => {
         count.update { n => n + 1 }
         if count.read { n => n } == 1 {
-            raise(NetworkError { url, status: 500, message: "injected failure" })
+            raise(HttpError { url, status: 500, message: "injected failure" })
         }
         resume(http_get(url))
     }

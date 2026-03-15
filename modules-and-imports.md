@@ -99,7 +99,7 @@ world server {
         log_level: :debug | :info | :warn | :error = :info
     }
     entry handle_request
-    handle Network  with WasiHttp
+    handle Http     with WasiHttp
     handle Database with Postgres(config.database_url)
     handle Logger   with StdoutLogger(level: config.log_level)
 }
@@ -107,7 +107,7 @@ world server {
 world test {
     entry test_runner
     handle Database with InMemoryDb
-    handle Network  with MockNetwork
+    handle Http     with MockHttp
     handle Logger   with QuietLogger
 }
 ```
@@ -432,7 +432,7 @@ Effects map to WIT imports:
 ```bounce
 // code uses Network and Database effects
 fn handle_request(req: Request) -> Response {
-    let data = Network.get("/upstream")
+    let data = Http.get("/upstream")
     let users = Database.query("SELECT ...", [])
     // ...
 }
@@ -456,7 +456,7 @@ The `world` declaration tells the linker how to wire imports to exports:
 
 ```bounce
 world server {
-    handle Network  with WasiHttp       // import "network" → wasi:http
+    handle Http     with WasiHttp       // import "network" → wasi:http
     handle Database with Postgres(...)  // import "database" → pg component
 }
 ```
@@ -483,7 +483,7 @@ The test world replaces all effect handlers at the boundary:
 world test {
     entry test_runner
     handle Database with InMemoryDb
-    handle Network  with MockNetwork
+    handle Http     with MockHttp
     handle Time     with SimulatedTime
 }
 ```

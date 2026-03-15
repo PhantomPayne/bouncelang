@@ -506,13 +506,13 @@ flow-sensitive narrowing in plain `if` covers the common "is it present?" case f
 ```bounce
 // Flow-sensitive narrowing in if — covers the common case
 if name {
-    IO.println("Hello, {name}")    // name narrowed to String & :true
+    Terminal.println("Hello, {name}")    // name narrowed to String & :true
 }
 
 // match — for when you need the :false branch or complex patterns
 match name {
-    :false => IO.println("no name")
-    name   => IO.println("Hello, {name}")
+    :false => Terminal.println("no name")
+    name   => Terminal.println("Hello, {name}")
 }
 ```
 

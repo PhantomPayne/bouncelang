@@ -162,7 +162,7 @@ match status {
 }
 
 // ✅ Handler wiring — align `with` (stable, read-heavy)
-handle Network  with WasiHttp
+handle Http     with WasiHttp
 handle Database with Postgres(config.database_url)
 handle Logger   with StdoutLogger(level: :info)
 ```
