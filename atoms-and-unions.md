@@ -293,8 +293,9 @@ type Bool = :true | :false
 
 > **`Result<T, E>` — no prelude type alias, but the pattern is first-class.** The truthiness
 > model naturally supports a `Result`-like type as `(T & :ok) | (E & :error)`. Projects can
-> declare `type Result<T, E> = (T & :ok) | (E & :error)` and use it with `if`. A stdlib alias is
-> planned for a future cycle (see `decisions-log.md` Known Open Issues).
+> declare `type Result<T, E> = (T & :ok) | (E & :error)` and use it with `if`. No stdlib
+> `Result` alias is currently planned — the `try` / `Raise<E>` model covers the same ground
+> without a wrapper type.
 
 ---
 

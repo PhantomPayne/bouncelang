@@ -22,7 +22,7 @@ Primitives are not effects. They do not suspend, do not cross WASI boundaries, a
 
 | Effect | WASI Interface | Purpose |
 |---|---|---|
-| `Network` | `wasi:http` | HTTP requests, WebSockets |
+| `Http` | `wasi:http` | HTTP requests, WebSockets |
 | `FileSystem` | `wasi:filesystem` | File read/write, directory operations |
 | `IO` | `wasi:cli` | Stdin/stdout/stderr |
 | `Time` | `wasi:clocks` | Current time, timers, sleep |
@@ -147,7 +147,7 @@ effect FileSystem {
 Effect operations are called using dot syntax on the effect name:
 
 ```bounce
-let response = Network.get("https://api.example.com/users")
+let response = Http.get("https://api.example.com/users")
 let now = Time.now()
 let content = FileSystem.read("/etc/config.json")
 ```
@@ -195,25 +195,25 @@ The world block wires the effect to its handler (see §6).
 
 ### Implicit Propagation
 
-Effects propagate implicitly through the call graph. If function `a` calls `Network.get()`, then `a` requires `Network`. If function `b` calls `a`, then `b` also requires `Network`. No annotation needed at any level.
+Effects propagate implicitly through the call graph. If function `a` calls `Http.get()`, then `a` requires `Http`. If function `b` calls `a`, then `b` also requires `Http`. No annotation needed at any level.
 
 ```bounce
-// These functions all implicitly require Network.
-// No "requires Network" annotation anywhere.
+// These functions all implicitly require Http.
+// No "requires Http" annotation anywhere.
 
 fn fetch_user(id: Int) -> User {
-    let response = Network.get("https://api.example.com/users/{id}")
+    let response = Http.get("https://api.example.com/users/{id}")
     parse_user(response.body)
 }
 
 fn fetch_all_users() -> List<User> {
-    let response = Network.get("https://api.example.com/users")
+    let response = Http.get("https://api.example.com/users")
     parse_users(response.body)
 }
 
 fn build_report() -> Report {
-    let users = fetch_all_users()    // implicitly requires Network
-    let posts = fetch_all_posts()    // implicitly requires Network
+    let users = fetch_all_users()    // implicitly requires Http
+    let posts = fetch_all_posts()    // implicitly requires Http
     compile_report(users, posts)
 }
 ```
@@ -230,15 +230,15 @@ When publishing a package (`bounce publish`), the semver checker compares effect
 - **Adding** an effect to a `pub fn` = **breaking change** (major version bump required).
 - **Removing** an effect from a `pub fn` = **minor change** (compatible).
 
-This prevents a common class of breaking changes: a library update silently starts requiring Network access, breaking consumers in sandboxed environments.
+This prevents a common class of breaking changes: a library update silently starts requiring Http access, breaking consumers in sandboxed environments.
 
 ### LSP Inlay Hints
 
 The LSP shows effect requirements as unobtrusive inlay hints:
 
 ```bounce
-fn build_report() -> Report {            // hint: [Network, FileSystem]
-    let users = fetch_all_users()        // hint: [Network]
+fn build_report() -> Report {            // hint: [Http, FileSystem]
+    let users = fetch_all_users()        // hint: [Http]
     let template = load_template()       // hint: [FileSystem]
     compile_report(users, template)
 }
@@ -256,7 +256,7 @@ A `pure fn` guarantees that a function performs no effects. The compiler enforce
 
 | Allowed in `pure fn` | Disallowed in `pure fn` |
 |---|---|
-| All computation | Effect calls (Network, FileSystem, etc.) |
+| All computation | Effect calls (Http, FileSystem, etc.) |
 | `Raise<E>` (error control flow) | `Time.now()`, `Random.int()` |
 | `Panic` (unrecoverable) | `Terminal.print()`, `FileSystem.read()` |
 | Memory allocation | `Concurrency.scope { }` |
@@ -282,10 +282,10 @@ pure fn bad_example() -> Int {
 }
 
 // Compile error: pure function calls non-pure function
-fn fetch() -> String { Network.get("...").body }
+fn fetch() -> String { Http.get("...").body }
 
 pure fn also_bad() -> String {
-    fetch()    // ERROR: fetch is not pure (requires Network)
+    fetch()    // ERROR: fetch is not pure (requires Http)
     //         //        cannot call non-pure function from pure context
 }
 ```
@@ -385,8 +385,8 @@ This is primarily useful for restricting capabilities in specific code paths, an
 
 ### Handler Resolution
 
-When a function calls an effect operation (e.g., `Network.get(url)`):
-1. The runtime looks up the handler for `Network` in the current world.
+When a function calls an effect operation (e.g., `Http.get(url)`):
+1. The runtime looks up the handler for `Http` in the current world.
 2. If an inline `with handle` override is active, it takes precedence.
 3. The handler bridges the call to the WASI interface.
 4. The host runtime processes the operation and returns the result.
@@ -396,7 +396,7 @@ If no handler is installed for an effect that the code requires, this is a compi
 ```bounce
 world cli {
     // Missing: handle Http
-    entry main    // ERROR if main's call graph uses Network
+    entry main    // ERROR if main's call graph uses Http
 }
 ```
 
@@ -408,12 +408,12 @@ Since every effect crosses a WASI boundary, the test runner can always intercept
 
 Each standard effect provides built-in test utilities that match its natural usage pattern. No `handle Effect = MockEffect(...)` boilerplate needed.
 
-### Network (MSW / VCR style)
+### Http (MSW / VCR style)
 
 ```bounce
 test fn fetches_users() {
     // Configure mock responses — request matching
-    Network.mock(:get, "https://api.example.com/users",
+    Http.mock(:get, "https://api.example.com/users",
         response: { status: 200, body: "[{\"id\": 1}]" },
     )
 
@@ -421,13 +421,13 @@ test fn fetches_users() {
     assert(users.len() == 1)
 
     // Assert what was called
-    assert(Network.requests == [
+    assert(Http.requests == [
         :get { url: "https://api.example.com/users" },
     ])
 }
 
 test fn handles_network_error() {
-    Network.mock(:get, "https://api.example.com/users",
+    Http.mock(:get, "https://api.example.com/users",
         response: { status: 500, body: "Internal Server Error" },
     )
 
@@ -565,9 +565,9 @@ If test code calls an effect operation that hasn't been configured, the test run
 
 ```
 Test Error: Unmocked effect call
-  Network.get("https://api.example.com/data")
+  Http.get("https://api.example.com/data")
 
-  Add a mock: Network.mock(:get, "https://api.example.com/data", response: ...)
+  Add a mock: Http.mock(:get, "https://api.example.com/data", response: ...)
 ```
 
 This prevents tests from accidentally performing real I/O.
@@ -604,7 +604,7 @@ Effect operations look like static method calls but behave differently:
 
 ```bounce
 // Effect operation — suspends Fiber, crosses WASI boundary
-let response = Network.get(url)
+let response = Http.get(url)
 
 // Regular function call — no suspension, no WASI
 let parsed = parse_json(response.body)
@@ -757,7 +757,7 @@ When the compiler encounters an effect operation:
 
 ```
 // Bouncelang source:
-let response = Network.get(url)
+let response = Http.get(url)
 
 // Compiles to (conceptual WASM):
 call $wasi_http_outgoing_request  // WASI import
@@ -814,8 +814,8 @@ fn get_user(id: Int) -> User {
 The LSP shows which effects each function requires as subtle inlay hints:
 
 ```bounce
-fn build_report() -> Report {            // [Network, FileSystem]
-    let users = fetch_all_users()        // [Network]
+fn build_report() -> Report {            // [Http, FileSystem]
+    let users = fetch_all_users()        // [Http]
     let template = load_template()       // [FileSystem]
     compile_report(users, template)      // (pure)
 }
@@ -828,26 +828,26 @@ Functions annotated `pure` are visually marked. The LSP also shows when a functi
 ### Effect Completions
 
 After typing an effect name and `.`, the LSP suggests available operations:
-- `Network.` → `get`, `post`, `put`, `patch`, `delete`, `request`, `websocket`, `listen`
+- `Http.` → `get`, `post`, `put`, `patch`, `delete`, `request`, `websocket`, `listen`
 - `Time.` → `now`, `datetime_now`, `sleep`, `after`, `every`
 
 ### Diagnostics
 
-- **Pure violation**: `Cannot call 'Network.get' from pure context. Effect calls are not allowed in pure functions.`
+- **Pure violation**: `Cannot call 'Http.get' from pure context. Effect calls are not allowed in pure functions.`
 - **Missing handler**: `World 'cli' does not handle effect 'Database'. Add: handle Database with ...`
-- **Breaking change**: `Adding 'Network' requirement to pub fn 'process' is a breaking change (was pure).`
+- **Breaking change**: `Adding 'Http' requirement to pub fn 'process' is a breaking change (was pure).`
 
 ### Go-to-Definition
 
-Clicking on an effect operation (e.g., `Network.get`) navigates to the effect declaration, showing the full operation signature and documentation.
+Clicking on an effect operation (e.g., `Http.get`) navigates to the effect declaration, showing the full operation signature and documentation.
 
 ### Test Mock Suggestions
 
 When writing a test that calls a function requiring effects, the LSP suggests adding mock configurations:
 
 ```
-Hint: 'fetch_users' requires Network.
-      Add: Network.mock(:get, "...", response: ...)
+Hint: 'fetch_users' requires Http.
+      Add: Http.mock(:get, "...", response: ...)
 ```
 
 ---
@@ -868,14 +868,14 @@ Effects are wired and constrained in world blocks. Full specification in `09-wor
 export world type game_script_sandbox {
     sandbox {
         allow [Time, Random]
-        deny [Network, FileSystem, IO, Concurrency]
+        deny [Http, FileSystem, IO, Concurrency]
     }
 }
 
 // User code targeting the sandbox
 world my_mod extends game_script_sandbox {
     // Cannot add: handle Http    with WasiHttp
-    // ERROR: Network is denied by game_script_sandbox
+    // ERROR: Http is denied by game_script_sandbox
     entry tick
 }
 ```
@@ -893,7 +893,7 @@ world my_mod extends game_script_sandbox {
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 2: Effects                                           │
 │  WASI boundaries. Fiber suspension. Handled in worlds.      │
-│  Network, FileSystem, IO, Time, Random, Concurrency         │
+│  Http, FileSystem, IO, Time, Random, Concurrency         │
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 1: Primitives                                        │
 │  Built-in. Always available. Raise (branches), Panic (trap) │

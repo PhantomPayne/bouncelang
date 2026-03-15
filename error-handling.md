@@ -8,9 +8,9 @@
 
 ---
 
-## 1. Core Principle: Errors Are Effects
+## 1. Core Principle: Errors Are Raised, Not Returned
 
-Errors are not return values. They are effects — specifically, the `Raise<E>` effect. Functions that can fail perform `Raise`. Nothing returns `Result`. There is no `?` operator. There is no `catch` keyword.
+Errors are not return values. They are raised via `Raise<E>`, a Layer 1 primitive that provides structured error control flow. Functions that can fail perform `raise`. Nothing returns `Result`. There is no `?` operator. There is no `catch` keyword.
 
 ```bounce
 // This function raises an error — it does NOT return Result
