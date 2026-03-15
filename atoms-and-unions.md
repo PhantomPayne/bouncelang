@@ -327,3 +327,97 @@ let conn: Connection & :authenticated = authenticate(raw_conn)
 
 For the full tag model — intersection types, flow-sensitive narrowing, evidence decay — see
 [02-data-structures.md §3](02-data-structures.md).
+
+---
+
+## 10. DST / Testing
+
+### Property-based Testing Over Unions
+
+Union types compose naturally with the property-based test generator:
+
+```bounce
+test fn exhaustive_order_status(status: OrderStatus) with [gen(OrderStatus)] {
+    // Generator produces all variants — compiler verifies exhaustiveness at compile time
+    match status {
+        :pending    => assert(can_process(status))
+        :processing => assert(is_active(status))
+        :complete   => assert(is_terminal(status))
+        :cancelled  => assert(is_terminal(status))
+    }
+}
+```
+
+### Atoms in DST State Machines
+
+Atoms are the natural building block for DST state machine assertions. Because union exhaustiveness
+is compile-time enforced, no state transition is accidentally unhandled in the test:
+
+```bounce
+test fn order_state_machine(seed: Int) with [sim: seed(seed)] {
+    let order = create_order()
+
+    // Deterministic simulation drives the state machine
+    Concurrency.scope { s =>
+        let state = s.state(order)
+        simulate_order_lifecycle(s, state)
+
+        let final = state.read { o => o.status }
+        match final {
+            :complete  => assert_receipt_exists(order.id)
+            :cancelled => assert_refund_issued(order.id)
+            _          => fail("order in unexpected terminal state: {final}")
+        }
+    }
+}
+```
+
+### No Special DST Behavior
+
+Atoms and unions have no special DST behavior beyond what the general type system provides.
+They are pure compile-time and value-semantic constructs with no I/O, no time dependency, and
+no concurrency concerns — they always behave identically in test and production.
+
+---
+
+## 11. LSP / DX (Developer Experience)
+
+| Checklist Item | Behavior |
+|---|---|
+| **Completions** | Typing `:` after `type Foo =` offers completions for all atoms defined in the current file and imported modules. Typing `:` inside a `match` arm suggests atoms from the matched union type. |
+| **Inlay hints** | For inline unions (`fn toggle(s: :on \| :off)`), the LSP shows the inferred type on hover without needing a named `type` alias. For `T?` sugar, inlay hints show the full `(T & :true) \| :false` expansion on hover. |
+| **Diagnostics** | Missing `match` arm: "Unhandled variant `:cancelled` in match on `OrderStatus`". Incorrect atom: "`:unknown` is not a member of `OrderStatus`". Inline union complexity lint: "3+ data-carrying variants — extract a named type". |
+| **Quick fixes** | "Add missing arms" — inserts all unhandled variants as stubs. "Extract inline union to named type" — creates a `type` alias and replaces the inline usage. |
+| **Hover / go-to-definition** | Hovering an atom (`:pending`) shows the union type it belongs to. Go-to-definition navigates to the `type` declaration. |
+| **Semantic highlighting** | Atoms (`:pending`, `:error`) receive a distinct semantic token (e.g., `enumMember`) separate from type names and variable names. The leading `:` is highlighted as part of the atom, not as a punctuation character. |
+
+---
+
+## 12. Compiling & WebAssembly (Wasm)
+
+Atoms and unions map directly to the WebAssembly Component Model's `variant` type:
+
+```
+// Bouncelang
+type HttpResponse =
+    | :ok { status: Int, body: String }
+    | :redirect { url: String }
+    | :not_found
+```
+
+```wit
+// Generated WIT
+variant http-response {
+    ok(ok-fields),
+    redirect(redirect-fields),
+    not-found,
+}
+record ok-fields { status: s64, body: string }
+record redirect-fields { url: string }
+```
+
+**Bare atoms** (no data) compile to `variant` cases with no associated type — zero payload, one discriminant byte.
+
+**Atoms with data** compile to `variant` cases with an associated `record` — one discriminant byte plus the record fields.
+
+**Intersection tags** (`:true`, `:finite`, `:validated`) are erased entirely at the Wasm boundary — they are compile-time metadata only. The underlying type is emitted as-is.

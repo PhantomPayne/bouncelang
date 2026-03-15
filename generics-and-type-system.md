@@ -411,3 +411,150 @@ match name {
 Higher-kinded types remain deferred beyond v2. The current generic system (concrete type
 parameters with constraints) covers all standard use cases in the spec corpus. HKTs will be
 reconsidered when real-world Bouncelang code demonstrates a genuine need.
+
+---
+
+## 7. DST / Testing
+
+### Generics Are DST-Transparent
+
+Generic functions and types have no special DST behavior. Because all values are immutable and
+all effects are tracked, generic code is inherently testable — a generic `fn sort<T: Ord>` has
+no effects, so it works identically in test and production with no handler configuration.
+
+### Property-Based Testing With Generics
+
+The standard `gen` generator works with generic types:
+
+```bounce
+test fn sort_is_idempotent<T: Ord>(list: List<T>) with [gen(List<Int>)] {
+    let sorted = sort(list)
+    assert_eq(sorted, sort(sorted))    // sorting a sorted list gives the same list
+}
+
+test fn map_preserves_length<T, U>(list: List<T>, f: pure fn(T) -> U) with [
+    gen(List<Int>),
+    gen(pure fn(Int) -> String = { n => n |> to_string }),
+] {
+    assert_eq(list.len(), list |> map(f) |> len())
+}
+```
+
+### `pure fn` in DST
+
+`pure fn` constraints are especially useful in DST because they guarantee no hidden I/O. The
+`State<T>` closures in `07-concurrency.md` use `pure fn` to prevent blocking the coordinator
+task — this makes concurrent state updates deterministic under the DST scheduler.
+
+### Value Semantics and Reproducibility
+
+Because all data is immutable and all mutation is via rebinding or structural update, any sequence
+of operations on a generic type is reproducible from the same input. There is no aliasing,
+no hidden mutation — the DST invariant "same seed → same execution" holds trivially for all
+generic code.
+
+---
+
+## 8. LSP / DX (Developer Experience)
+
+| Checklist Item | Behavior |
+|---|---|
+| **Completions** | After typing `<`, the LSP suggests known type parameters in context. After `where`, the LSP suggests available interfaces (`Ord`, `Hash`, `Display`, etc.) with documentation. After `fn f<T: `, the LSP autocompletes constraint names. |
+| **Inlay hints** | On every variable binding, the inferred type is shown: `let doubled = numbers \|> map { x => x * 2 }  // List<Int>`. On generic calls, inferred type arguments are shown: `sort(users)  // <User>`. |
+| **Diagnostics** | Missing constraint: "Function `sort` requires `T: Ord`, but `User` does not satisfy `Ord` — add `fn compare(self: User, other: User) -> :less \| :equal \| :greater` to satisfy the constraint". Type mismatch in generic: shows the expected and actual types with the full generic substitution applied. |
+| **Quick fixes** | "Generate `Display` implementation" — when a type is missing an interface the call site needs, inserts a stub implementation. "Make parameter `pure`" — when a function is already pure, offers to annotate it. |
+| **Hover / go-to-definition** | Hovering a type variable (`T`) inside a generic function shows all constraints on it. Hovering an interface name shows all types in scope that satisfy it. Go-to-definition on an interface navigates to the `interface` declaration. |
+| **Semantic highlighting** | Type parameters (`T`, `K`, `V`) receive a distinct semantic token (e.g., `typeParameter`). Interface names in `where` clauses receive the `interface` token. `pure` keyword on function types is highlighted distinctly. |
+
+---
+
+## 9. Compiling & WebAssembly (Wasm)
+
+### Monomorphization
+
+Bouncelang uses monomorphization for generics — the compiler generates a concrete implementation
+for each distinct set of type arguments used. `sort<Int>`, `sort<String>`, and `sort<User>` are
+three distinct functions in the Wasm output.
+
+This means generic code has zero runtime overhead — no boxing, no vtables, no type tags at
+runtime. The cost is code size, mitigated by tree-shaking (only used instantiations are emitted).
+
+### `opaque type` at the Wasm Boundary
+
+Opaque types export their `with` list as the WIT interface. Internal fields are hidden — the Wasm
+component model enforces the boundary at the binary level, not just the language level:
+
+```bounce
+// package.bounce
+export opaque type Connection with { open, query, close }
+```
+
+Generates a WIT interface where only `open`, `query`, and `close` are exported. No internal field
+accessor is present in the WIT. An external Wasm consumer cannot bypass the `opaque` boundary even
+through low-level Wasm tooling.
+
+### `nominal type` at the Wasm Boundary
+
+Nominal types are transparent at the Wasm level — they compile to their underlying type. The
+nominal distinction exists only in the Bouncelang type system:
+
+```bounce
+nominal type Email = String
+```
+
+Compiles to `string` in WIT. A Wasm consumer receives a plain string. The `Email` vs `String`
+distinction is enforced within Bouncelang code only.
+
+### Value Semantics and Move Optimization
+
+All values are immutable. The compiler uses move semantics to optimize — when a value has exactly
+one owner and is passed to a function that consumes it, the compiler generates an in-place mutation
+rather than a copy. This is invisible to the programmer but produces efficient Wasm output without
+requiring explicit ownership annotations.
+
+### Recursive Types
+
+Recursive types (`Tree<T>`, `Json`) require heap allocation for the recursive field. The compiler
+inserts `ref` (heap indirection) automatically at recursive positions. No `Box<T>` or explicit
+heap annotation is visible in Bouncelang source code.
+
+---
+
+## 10. Serialization
+
+### Auto-Derived Interfaces
+
+The compiler auto-derives `Eq`, `Hash`, `Debug`, and `Serialize`/`Deserialize` from fields for
+all `type` and `nominal type` declarations. No annotation needed:
+
+```bounce
+type Point = { x: Float, y: Float }
+// Auto-derived: Eq, Hash, Debug, Serialize, Deserialize
+
+nominal type UserId = Int
+// Auto-derived: Eq, Hash, Debug, Serialize, Deserialize
+// NOT interchangeable with plain Int in function signatures
+```
+
+`opaque type` auto-derives `Debug` for internal use only — the debug output includes all fields.
+For external serialization, only fields listed in the `with` export list are available. Custom
+serialization for opaque types is defined via a `view` declaration (see
+[08-serialization-boundaries.md](08-serialization-boundaries.md)).
+
+### Overriding Derivation
+
+An explicit function definition overrides the auto-derived version:
+
+```bounce
+type User = { name: String, email: Email, age: Int }
+// Auto-derived: Debug, Eq, Hash, Serialize
+
+// Override display (not auto-derived, requires domain logic)
+fn display(self: User) -> String { "{self.name} <{self.email}>" }
+
+// Override serialize to exclude sensitive fields
+fn serialize(self: User) -> Bytes {
+    Json.encode({ name: self.name, email: self.email })
+    // deliberately omitting age
+}
+```

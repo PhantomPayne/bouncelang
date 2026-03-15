@@ -413,7 +413,76 @@ test fn division_by_zero_panics() {
 
 ---
 
-## Summary
+## 11. LSP / DX (Developer Experience)
+
+| Checklist Item | Behavior |
+|---|---|
+| **Completions** | Typing `raise(` suggests all `error` types in scope. Inside a `try` block, after the success arm, the LSP suggests all `Raise<E>` types inferred on the expression, as pattern stubs with field names. |
+| **Inlay hints** | On every internal `fn`, inlay hints show the inferred `Raise<E>` effects: `fn process(id: Int) -> User  // inferred: Raise<ParseError>, Raise<NetworkError>`. On `pub fn`, missing explicit effect annotations are shown as hints with a "Make explicit" quick-fix. |
+| **Diagnostics** | Missing arm in `try`: "Unhandled error: `TimeoutError`, raised by `fetch_user → http_get` (services/http.bounce:28)". Using `?` operator: "`?` is not available — use `try` blocks". Using `catch` keyword: "`catch` is not available — use `try` with error arms". |
+| **Quick fixes** | "Add missing error arms" — inserts stubs for all unhandled errors, with field destructuring and a `// TODO` comment. "Make effects explicit" — adds `with Raise<...>` annotation to a `pub fn`. "Extract error group" — wraps multiple `Raise<X>` errors into a named `error Group = \| X \| Y`. |
+| **Hover / go-to-definition** | Hovering `raise(NetworkError { ... })` shows the full error type including auto-derived JSON structure. Hovering a `try` expression shows the full set of error arms expected. Go-to-definition on an error name navigates to its `error` declaration. |
+| **Semantic highlighting** | `error` declarations are highlighted as type declarations. `raise` calls are highlighted distinctly (e.g., as a control flow keyword) to signal "this exits the current function path". `try` arms are highlighted like match arms. |
+
+---
+
+## 12. Compiling & WebAssembly (Wasm)
+
+`Raise<E>` is a Layer 1 primitive — it compiles to **conditional branches**, not Fiber suspension.
+There is zero overhead from the async/WASI machinery.
+
+### Compilation model
+
+```bounce
+fn get_user(id: Int) -> User {
+    let row = db_lookup(id)
+    if row == :false {
+        raise NotFoundError { id }
+    }
+    parse_user(row)
+}
+```
+
+Compiles to approximately:
+
+```wat
+;; Wasm (conceptual — actual output uses tagged return values)
+(func $get_user (param $id i64) (result i32 i64)
+  ;; i32 is the discriminant: 0 = success, 1 = NotFoundError
+  ;; i64 carries either the User ptr or the error struct ptr
+  (local $row i64)
+  (local.set $row (call $db_lookup (local.get $id)))
+  (if (i64.eq (local.get $row) (i64.const 0))  ;; :false check
+    (then
+      ;; return NotFoundError tag + error struct
+      (return (i32.const 1) (call $alloc_not_found_error (local.get $id)))))
+  ;; return success tag + user ptr
+  (i32.const 0) (call $parse_user (local.get $row))
+)
+```
+
+The tagged return pattern means each `Raise<E>` adds one `i32` discriminant to the return ABI. The
+compiler collapses multiple errors into a single discriminant field — `Raise<A | B | C>` is one
+`i32`, not three.
+
+### `error` structs at the Wasm boundary
+
+`error` types are emitted as standard `record` types in WIT. Auto-derived `to_json` compiles to
+a serialization function over those fields — no reflection, no runtime type tags.
+
+```wit
+// error NetworkError = { url: String, status: Int, message: String }
+record network-error { url: string, status: s64, message: string }
+```
+
+### Panic vs Raise at the Wasm level
+
+| Mechanism | Wasm instruction | Host behavior |
+|---|---|---|
+| `Raise<E>` | Tagged `return` (branch) | Caller handles the tagged value |
+| `Panic` | `unreachable` | Runtime traps; host catches the trap |
+
+
 
 | Concept | Decision |
 |---|---|
