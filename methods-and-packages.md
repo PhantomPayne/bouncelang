@@ -51,7 +51,7 @@ This makes intent explicit. The function author opts into method-call syntax by 
 
 ## 2. `package.bounce` — Public API Without File Paths
 
-`package.bounce` declares the package's public API and code-analysis rules. It does **not** reference internal file paths — the compiler scans the package to find declarations. See [worlds-and-handlers.md](file:///Users/tom/projects/bouncelang/docs/spec/worlds-and-handlers.md) for the build-target side (`world`).
+`package.bounce` declares the package's public API and code-analysis rules. It does **not** reference internal file paths — the compiler scans the package to find declarations. See [worlds-and-handlers.md](worlds-and-handlers.md) for the build-target side (`world`).
 
 ```bounce
 package {
@@ -240,7 +240,7 @@ No explicit flag needed. The distinction is structural:
 | Can `bounce run` | No | Yes |
 | Can `bounce publish` | Yes | Typically no |
 
-Libraries define types, functions, and handlers that applications wire together via worlds. See [worlds-and-handlers.md](file:///Users/tom/projects/bouncelang/docs/spec/worlds-and-handlers.md) for full world documentation.
+Libraries define types, functions, and handlers that applications wire together via worlds. See [worlds-and-handlers.md](worlds-and-handlers.md) for full world documentation.
 
 ### Effect Annotations
 

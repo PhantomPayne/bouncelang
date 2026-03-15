@@ -9,7 +9,7 @@
 
 ## 1. The Two Files
 
-Every Bouncelang project has a root `package.bounce`. Sub-directories can also have `package.bounce` files acting as module barrels (see [modules-and-imports.md](file:///Users/tom/projects/bouncelang/docs/spec/modules-and-imports.md)). Applications also have one or more `world` declarations inside `package.bounce`.
+Every Bouncelang project has a root `package.bounce`. Sub-directories can also have `package.bounce` files acting as module barrels (see [modules-and-imports.md](modules-and-imports.md)). Applications also have one or more `world` declarations inside `package.bounce`.
 
 ### `package.bounce` — About the Code
 
