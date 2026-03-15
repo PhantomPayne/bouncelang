@@ -2,8 +2,8 @@
 
 **Status:** Draft — evolved from design review discussion  
 **Related:**
-- [methods-and-packages.md](file:///Users/tom/projects/bouncelang/docs/spec/methods-and-packages.md) — UFCS, companions, `package.bounce` exports
-- [modules-and-imports.md](file:///Users/tom/projects/bouncelang/docs/spec/modules-and-imports.md) — sub-modules, imports, stdlib, WASM linking
+- [methods-and-packages.md](methods-and-packages.md) — UFCS, companions, `package.bounce` exports
+- [modules-and-imports.md](modules-and-imports.md) — sub-modules, imports, stdlib, WASM linking
 
 ---
 

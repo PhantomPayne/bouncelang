@@ -2,8 +2,8 @@
 
 **Status:** Draft — evolved from design review discussion
 **Related:**
-- [methods-and-packages.md](file:///Users/tom/projects/bouncelang/docs/spec/methods-and-packages.md) — UFCS, companions, `package.bounce` exports
-- [worlds-and-handlers.md](file:///Users/tom/projects/bouncelang/docs/spec/worlds-and-handlers.md) — worlds, handlers, config
+- [methods-and-packages.md](methods-and-packages.md) — UFCS, companions, `package.bounce` exports
+- [worlds-and-handlers.md](worlds-and-handlers.md) — worlds, handlers, config
 
 ---
 
@@ -189,13 +189,15 @@ These types and values are in scope in every file without import:
 
 ```bounce
 // Primitive types
-Int, Float, String, Bool, Byte, Never
+Int, Float, Decimal, String, Bool, Bytes, Never
 
 // Core collections
 List, Map, Set
 
-// Core enums
-Option    // :some { value: T }, :none
+// Option<T> — the v2 truthiness model
+// Option<T> = (T & :true) | :false
+// T? is syntactic sugar for Option<T>
+// The present value IS the value (tagged :true), no unwrap needed
 
 // Unit
 ()

@@ -3,8 +3,8 @@
 **Status:** Draft — evolved from design review discussion
 **Supersedes:** `docs/plans/2026-03-11-impl-resolution.md` (impl blocks dropped in favor of UFCS)
 **Related:**
-- [worlds-and-handlers.md](file:///Users/tom/projects/bouncelang/docs/spec/worlds-and-handlers.md) — worlds, handlers, config
-- [modules-and-imports.md](file:///Users/tom/projects/bouncelang/docs/spec/modules-and-imports.md) — sub-modules, imports, stdlib, WASM linking
+- [worlds-and-handlers.md](worlds-and-handlers.md) — worlds, handlers, config
+- [modules-and-imports.md](modules-and-imports.md) — sub-modules, imports, stdlib, WASM linking
 
 ---
 

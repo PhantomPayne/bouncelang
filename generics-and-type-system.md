@@ -2,9 +2,9 @@
 
 **Status:** Draft — evolved from design review discussion
 **Related:**
-- [atoms-and-unions.md](file:///Users/tom/projects/bouncelang/docs/spec/atoms-and-unions.md) — atoms, unions, pattern matching
-- [methods-and-packages.md](file:///Users/tom/projects/bouncelang/docs/spec/methods-and-packages.md) — UFCS, companions, exports
-- [error-handling.md](file:///Users/tom/projects/bouncelang/docs/spec/error-handling.md) — errors, Raise effect
+- [atoms-and-unions.md](atoms-and-unions.md) — atoms, unions, pattern matching
+- [methods-and-packages.md](methods-and-packages.md) — UFCS, companions, exports
+- [error-handling.md](error-handling.md) — errors, Raise effect
 
 ---
 
@@ -376,16 +376,38 @@ No `Box`, no manual heap allocation. The compiler determines what needs indirect
 
 ---
 
-## 6. Open Design Questions
+## 6. V2 Decisions
 
-### `:true/:false` Unification
+### `:true/:false` Unification — Adopted
 
-Under investigation: using `:true | :false` as a universal positive/negative pattern, replacing `Option<T>` with `:true { value: T } | :false`, and `T?` as sugar. Promising but needs more validation with generics and pipelines.
+The v2 spec adopts the unified truthiness model. `Option<T>` is `(T & :true) | :false`. `T?` is
+syntactic sugar. This eliminates all special `Option` unwrapping — the value IS the option when
+present — and makes `if`, `match`, and flow-sensitive narrowing work uniformly across booleans,
+optionals, and tagged results.
 
-### `if let` Syntax
+See [02-data-structures.md §3](02-data-structures.md) for the full model, including evidence
+decay and the interaction with nested updates.
 
-Likely: `if let value = expr { ... }` for pattern matching in conditionals. Details depend on the `:true/:false` question.
+### `if let` Syntax — Resolved by `match`
 
-### Higher-Kinded Types
+Explicit `if let` syntax is not needed. `match` handles all pattern matching in conditionals, and
+flow-sensitive narrowing in plain `if` covers the common "is it present?" case for `Option<T>`.
 
-Deferred to V2. V1 uses concrete generic types only.
+```bounce
+// Flow-sensitive narrowing in if — covers the common case
+if name {
+    IO.println("Hello, {name}")    // name narrowed to String & :true
+}
+
+// match — for when you need the :false branch or complex patterns
+match name {
+    :false => IO.println("no name")
+    name   => IO.println("Hello, {name}")
+}
+```
+
+### Higher-Kinded Types — Deferred
+
+Higher-kinded types remain deferred beyond v2. The current generic system (concrete type
+parameters with constraints) covers all standard use cases in the spec corpus. HKTs will be
+reconsidered when real-world Bouncelang code demonstrates a genuine need.

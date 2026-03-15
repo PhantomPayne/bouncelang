@@ -2,9 +2,9 @@
 
 **Status:** Draft — evolved from design review discussion
 **Related:**
-- [atoms-and-unions.md](file:///Users/tom/projects/bouncelang/docs/spec/atoms-and-unions.md) — union types, pattern matching
-- [worlds-and-handlers.md](file:///Users/tom/projects/bouncelang/docs/spec/worlds-and-handlers.md) — worlds, effect handlers
-- [methods-and-packages.md](file:///Users/tom/projects/bouncelang/docs/spec/methods-and-packages.md) — `pub fn` effect annotations
+- [atoms-and-unions.md](atoms-and-unions.md) — union types, pattern matching
+- [worlds-and-handlers.md](worlds-and-handlers.md) — worlds, effect handlers
+- [methods-and-packages.md](methods-and-packages.md) — `pub fn` effect annotations
 
 ---
 
@@ -170,9 +170,10 @@ Use spread to add context to an existing error:
 fn fetch_user(id: Int) -> User {
     try http_get("/users/{id}") {
         response => parse(response)
-        NetworkError(e) => raise(NetworkError {
-            ...e,
-            message: "fetching user {id}: {e.message}",
+        NetworkError { url, status, message } => raise(NetworkError {
+            url,
+            status,
+            message: "fetching user {id}: {message}",
         })
     }
 }

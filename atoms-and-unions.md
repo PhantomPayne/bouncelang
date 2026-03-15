@@ -2,9 +2,10 @@
 
 **Status:** Draft — evolved from design review discussion
 **Related:**
-- [methods-and-packages.md](file:///Users/tom/projects/bouncelang/docs/spec/methods-and-packages.md) — UFCS, companions, operators (nominal types)
-- [worlds-and-handlers.md](file:///Users/tom/projects/bouncelang/docs/spec/worlds-and-handlers.md) — worlds, handlers, config
-- [modules-and-imports.md](file:///Users/tom/projects/bouncelang/docs/spec/modules-and-imports.md) — sub-modules, imports, stdlib
+- [methods-and-packages.md](methods-and-packages.md) — UFCS, companions, operators (nominal types)
+- [worlds-and-handlers.md](worlds-and-handlers.md) — worlds, handlers, config
+- [modules-and-imports.md](modules-and-imports.md) — sub-modules, imports, stdlib
+- [02-data-structures.md](02-data-structures.md) — intersection tags, truthiness model
 
 ---
 
@@ -235,14 +236,36 @@ match value {
 These union types are always in scope — no import needed:
 
 ```bounce
-type Option<T> =
-    | :some { value: T }
-    | :none
-
-type Bool = :true | :false    // Bool is just a union of atoms
+// Bool is a union of two atoms
+type Bool = :true | :false
 ```
 
-> **Note:** There is no `Result<T, E>` in the prelude. Errors are handled via the `Raise<E>` effect and `try` blocks — see [error-handling.md](file:///Users/tom/projects/bouncelang/docs/spec/error-handling.md). There is no `?` operator.
+> **`Option<T>` — the v2 truthiness model.** In v2, `Option<T>` is `(T & :true) | :false` — a
+> tagged union where the present value IS the inner type (tagged `:true`), and the absent case IS
+> the `:false` atom. `T?` is syntactic sugar for `Option<T>`.
+>
+> This is different from a `:some/:none` wrapper — there is no `.value` to unwrap. The value
+> itself is the option. Flow-sensitive narrowing in `if` and `match` gives the compiler proof of
+> presence:
+>
+> ```bounce
+> let name: String? = ...            // (String & :true) | :false
+>
+> if name {
+>     // name is narrowed to String & :true — it IS the string, no unwrap needed
+>     IO.println("Hello, {name}")
+> }
+>
+> match name {
+>     :false => IO.println("no name")
+>     name   => IO.println("Hello, {name}")    // name narrowed to String & :true
+> }
+> ```
+>
+> See [02-data-structures.md §3](02-data-structures.md) for the full truthiness and intersection tag model.
+
+> **There is no `Result<T, E>` in the prelude.** Errors are handled via the `Raise<E>` effect and
+> `try` blocks — see [error-handling.md](error-handling.md). There is no `?` operator.
 
 ---
 
@@ -276,19 +299,31 @@ match order {
 
 ---
 
-## 9. Tags — Deferred to V2
+## 9. Tags — Adopted in V2
 
-Barnacle-style type tags (`String & :email`, `Connection & :authenticated`) are **not** included in V1. They're powerful (additive, zero-cost, composable) but add significant type system complexity.
+Intersection tags (`String & :email`, `Connection & :authenticated`, `Sequence<T> & :finite`) are
+a **core part of v2**. They are compile-time, zero-cost metadata attached to any type that create
+an intersection type `Base & :Tag`.
 
-For V1, use `nominal` types for type-level distinctions:
+The `:true` and `:false` tags power the entire truthiness and `Option<T>` model (see §7 above).
+The `:finite` and `:infinite` tags are used by `Sequence<T>` to enforce at compile time which
+operations require a bounded sequence. The `:validated` pattern enables evidence-carrying types.
 
 ```bounce
-nominal type Email = String
-nominal type SanitizedEmail = Email
+// Tags are additive — they compose
+let validated: Email & :validated = validate(raw_string)
 
-fn validate(input: String) -> Email with Raise<ValidationError>
-fn sanitize(email: Email) -> SanitizedEmail
-fn send(to: SanitizedEmail) -> () with Network
+// Tags are zero-cost — erased at runtime
+// Tags are compile-time evidence — the compiler tracks them through the call graph
+
+// Sequences carry finiteness tags
+fn collect<T>(self: Sequence<T> & :finite) -> List<T>    // only finite sequences can be collected
+fn fibonacci() -> Sequence<Int> & :infinite               // can never be collected
+
+// Structural records and nominal types can both be tagged
+let point: Point & :origin = { x: 0, y: 0 }
+let conn: Connection & :authenticated = authenticate(raw_conn)
 ```
 
-Tags may be revisited in V2 based on real-world usage patterns.
+For the full tag model — intersection types, flow-sensitive narrowing, evidence decay — see
+[02-data-structures.md §3](02-data-structures.md).

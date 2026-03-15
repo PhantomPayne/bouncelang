@@ -235,8 +235,10 @@ let (users, posts) = Concurrency.scope { s =>
 Concurrency.scope { s =>
     for conn in listener.accept() {
         s.detach {
-            try { handle_connection(conn) }
-            catch { err => IO.eprintln("connection error: {err}") }
+            try handle_connection(conn) {
+                _ => ()
+                err => IO.eprintln("connection error: {err}")
+            }
         }
     }
 }

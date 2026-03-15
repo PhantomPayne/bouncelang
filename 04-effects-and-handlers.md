@@ -428,11 +428,9 @@ test fn handles_network_error() {
         response: { status: 500, body: "Internal Server Error" },
     )
 
-    try {
-        fetch_users()
-        assert(false, "should have raised")
-    } catch {
-        ApiError => assert(true)
+    try fetch_users() {
+        _ => assert(false, "expected error, got success")
+        ApiError { ... } => assert(true)
     }
 }
 ```
