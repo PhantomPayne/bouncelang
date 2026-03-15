@@ -26,6 +26,13 @@ Provide the following files verbatim to the agent at the start of the session:
 | `modules-and-imports.md` | Import resolution, workspaces, test files. |
 | `worlds-and-handlers.md` | `world` files, named handlers, config block, entry points. |
 
+**When running after the Spec Recommender Agent,** also provide:
+
+| File | Role |
+|---|---|
+| `recommender-recommendations.md` | The recommender agent's triage table, option evaluations, and decisions log — read this first to understand why new or modified spec files look the way they do. |
+| *(any new spec files created by the recommender)* | Treat as additional spec files to include in the consistency audit, using the same scoring rubric as all other spec files. |
+
 **What is the "v2 spec"?**
 
 The numbered files (`01-`, `02-`, `04-`, `07-`, `08-`) are explicitly labeled as v2 layer specs. They are the most mature documents and contain the most complete DST, LSP, and Wasm stories. Use their structure, terminology, and depth of coverage as the **template** every other spec file should converge toward.

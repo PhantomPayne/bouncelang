@@ -41,6 +41,7 @@
 | `methods-and-packages.md` | | |
 | `modules-and-imports.md` | | |
 | `worlds-and-handlers.md` | | |
+| *(any new files from recommender)* | | |
 
 ---
 
