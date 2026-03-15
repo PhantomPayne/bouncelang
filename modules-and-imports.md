@@ -2,8 +2,8 @@
 
 **Status:** Draft — evolved from design review discussion
 **Related:**
-- [methods-and-packages.md](file:///Users/tom/projects/bouncelang/docs/spec/methods-and-packages.md) — UFCS, companions, `package.bounce` exports
-- [worlds-and-handlers.md](file:///Users/tom/projects/bouncelang/docs/spec/worlds-and-handlers.md) — worlds, handlers, config
+- [methods-and-packages.md](methods-and-packages.md) — UFCS, companions, `package.bounce` exports
+- [worlds-and-handlers.md](worlds-and-handlers.md) — worlds, handlers, config
 
 ---
 
@@ -99,7 +99,7 @@ world server {
         log_level: :debug | :info | :warn | :error = :info
     }
     entry handle_request
-    handle Network  with WasiHttp
+    handle Http     with WasiHttp
     handle Database with Postgres(config.database_url)
     handle Logger   with StdoutLogger(level: config.log_level)
 }
@@ -107,7 +107,7 @@ world server {
 world test {
     entry test_runner
     handle Database with InMemoryDb
-    handle Network  with MockNetwork
+    handle Http     with MockHttp
     handle Logger   with QuietLogger
 }
 ```
@@ -189,13 +189,15 @@ These types and values are in scope in every file without import:
 
 ```bounce
 // Primitive types
-Int, Float, String, Bool, Byte, Never
+Int, Float, Decimal, String, Bool, Bytes, Never
 
 // Core collections
 List, Map, Set
 
-// Core enums
-Option    // :some { value: T }, :none
+// Option<T> — the v2 truthiness model
+// Option<T> = (T & :true) | :false
+// T? is syntactic sugar for Option<T>
+// The present value IS the value (tagged :true), no unwrap needed
 
 // Unit
 ()
@@ -430,7 +432,7 @@ Effects map to WIT imports:
 ```bounce
 // code uses Network and Database effects
 fn handle_request(req: Request) -> Response {
-    let data = Network.get("/upstream")
+    let data = Http.get("/upstream")
     let users = Database.query("SELECT ...", [])
     // ...
 }
@@ -454,7 +456,7 @@ The `world` declaration tells the linker how to wire imports to exports:
 
 ```bounce
 world server {
-    handle Network  with WasiHttp       // import "network" → wasi:http
+    handle Http     with WasiHttp       // import "network" → wasi:http
     handle Database with Postgres(...)  // import "database" → pg component
 }
 ```
@@ -464,3 +466,60 @@ The compiler + linker:
 2. Resolves `WasiHttp` → `wasi:http/outgoing-handler` interface
 3. Resolves `Postgres` → `pg` component's export
 4. Composes the final linked component using `wasm-tools compose`
+
+---
+
+## 10. DST / Testing
+
+### Test Worlds and the Module System
+
+Test files (`.test.bounce`) run under the test `world`. The module system's visibility rules are
+unchanged — `.test.bounce` files can import `dev_deps` and access `test`-tier exports, but they
+use the same `import { X } from name` syntax as production code.
+
+The test world replaces all effect handlers at the boundary:
+
+```bounce
+world test {
+    entry test_runner
+    handle Database with InMemoryDb
+    handle Http     with MockHttp
+    handle Time     with SimulatedTime
+}
+```
+
+Because sub-modules are compile-time only (flattened to one Wasm component), the test world
+covers the entire flattened component — no per-sub-module test configuration is needed.
+
+### Module Boundaries as DST Isolation Points
+
+Sub-module `package.bounce` visibility rules can be used to enforce testability boundaries:
+
+```bounce
+// models/package.bounce
+lints {
+    std/no-effects: :error    // models must be pure — no effect calls
+}
+```
+
+This lint ensures that domain model functions are pure, making them trivially deterministic and
+testable without any DST machinery.
+
+### `bounce test` and the Default Test World
+
+For library packages (no `world`), `bounce test` uses a built-in default test world that intercepts
+all standard effects with their test doubles. Library authors do not need to write a `world test`
+block unless they need custom handler overrides.
+
+---
+
+## 11. LSP / DX (Developer Experience)
+
+| Checklist Item | Behavior |
+|---|---|
+| **Completions** | `import { ` triggers completions for all exported names from packages in `deps`, internal sub-modules, and stdlib. Completions show the package source as metadata. Typing a name that is not imported triggers "auto-import" suggestions in the LSP. |
+| **Inlay hints** | Above each `import` block, the LSP shows the origin: `// from deps`, `// from sub-module`, `// from stdlib`. Unused imports are dimmed with a "Remove unused import" quick-fix. |
+| **Diagnostics** | Unknown module: "`models` is not in deps, not a local sub-module, and not a stdlib prefix." Name collision: "Local module `http-client` shadows dependency `http-client` — rename the local module." Circular package dependency: detected at build time with the cycle shown. Missing handler: "Effect `Logger` is used by `log_request` but no handler is declared in world `server`." |
+| **Quick fixes** | "Add import" — inserts `import { X } from name` when an unresolved name matches an exported symbol. "Remove unused import" — removes imports with no usage. "Organize imports" — sorts and groups imports per formatter rules (std → deps → internal). |
+| **Hover / go-to-definition** | Hovering an imported name shows its source package, version, and type signature. Go-to-definition navigates to the source file within the package, if available, or to the WIT interface if it is a WASM-only package. |
+| **Semantic highlighting** | Package names in `import { X } from name` receive a `namespace` semantic token. `export`, `internal`, and `pub` visibility keywords receive a `modifier` token. `test` keyword on `test fn` and `test` exports receives a distinct token. |

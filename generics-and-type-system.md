@@ -2,9 +2,9 @@
 
 **Status:** Draft — evolved from design review discussion
 **Related:**
-- [atoms-and-unions.md](file:///Users/tom/projects/bouncelang/docs/spec/atoms-and-unions.md) — atoms, unions, pattern matching
-- [methods-and-packages.md](file:///Users/tom/projects/bouncelang/docs/spec/methods-and-packages.md) — UFCS, companions, exports
-- [error-handling.md](file:///Users/tom/projects/bouncelang/docs/spec/error-handling.md) — errors, Raise effect
+- [atoms-and-unions.md](atoms-and-unions.md) — atoms, unions, pattern matching
+- [methods-and-packages.md](methods-and-packages.md) — UFCS, companions, exports
+- [error-handling.md](error-handling.md) — errors, Raise effect
 
 ---
 
@@ -120,6 +120,36 @@ export opaque type Money with { amount, currency, new, add }
 | `nominal type` | ✅ direct | ✅ all | ✅ yes | No — just type safety |
 | `opaque type` | ❌ factory only | `with` list only | ❌ no | Yes — hidden internals |
 
+**Record construction forms:** For structural (`type`) and nominal types, two equivalent
+construction forms are valid:
+
+```bounce
+type Point = { x: Float, y: Float }
+
+// Form 1 — TypeName { fields }
+// The compiler verifies all required fields against the named type.
+let p1 = Point { x: 1.0, y: 2.0 }
+
+// Form 2 — structural literal with type annotation on the binding
+// The compiler infers the shape from context.
+let p2: Point = { x: 1.0, y: 2.0 }
+```
+
+Both forms are correct. `TypeName { }` is preferred when you want the compiler to check field
+completeness at the construction site. `{ }` with an annotation is preferred when the type is
+clear from context (e.g., a function return type or a known parameter type).
+
+**Opaque primitive wrappers:** An opaque type can wrap a single primitive:
+
+```bounce
+opaque type UserId = Int
+opaque type Email = String
+```
+
+This is distinct from `nominal type` (which is transparent) — external code cannot see the
+underlying `Int`. The opaque wrapper is constructed and accessed only through factory functions
+listed in the `with` clause. Zero cost at runtime — it compiles to the underlying type.
+
 ---
 
 ## 2. Generics
@@ -170,6 +200,47 @@ fn sort_and_display<T>(list: List<T>) -> List<String>
 
 Structural typing handles everything else — if a function takes `{ name: String }`, any type with a `name: String` field works. No constraint needed.
 
+### Function Literals (Lambdas)
+
+`fn(T) -> U` is a **type annotation** for a function value. The **literal** syntax for anonymous
+functions is `{ params => expr }` — a block with a `=>` separating the parameter list from the
+body.
+
+```bounce
+// Single parameter
+let double = { x => x * 2 }                       // fn(Int) -> Int (inferred)
+
+// Multiple parameters
+let add = { x, y => x + y }                       // fn(Int, Int) -> Int
+
+// Zero parameters (thunk)
+let greeting = { => "Hello!" }                     // fn() -> String
+// or just a block (when it captures nothing):
+let greeting = { "Hello!" }
+
+// Multi-line body — last expression is the return value
+let describe = { score =>
+    if score >= 80 { "pass" }
+    else if score >= 60 { "borderline" }
+    else { "fail" }
+}
+```
+
+Lambdas work in **any argument position**, not just the final trailing argument:
+
+```bounce
+// Lambda as a non-trailing argument
+fn apply_twice<T>(f: fn(T) -> T, value: T) -> T { f(f(value)) }
+
+let result = apply_twice({ x => x * 2 }, 3)       // result == 12
+
+// Pipeline position (most common)
+scores |> filter { s => s.value > 80 } |> map { s => s.player }
+```
+
+The `fn(T) -> U` type annotation describes what a lambda argument must look like. You do not write
+`fn(x) => expr` as a value — the `{ x => expr }` form is the only anonymous function syntax.
+
 ### What We Don't Have
 
 No type-level computation. The type system is simple and predictable:
@@ -198,6 +269,24 @@ interface Display {
 interface Ord {
     fn compare(self, other: Self) -> :less | :equal | :greater
 }
+```
+
+**`self` in interface methods means the implementing type.** When you write `fn display(self) -> String`
+in an interface, `self` is a placeholder for "the type that satisfies this interface." The compiler
+substitutes the concrete type at the call site. You cannot annotate `self` with a specific type
+inside an interface declaration — if you need a function that takes a fixed type, declare it as a
+plain function, not an interface method.
+
+```bounce
+// ✅ Correct — self is the implementing type
+interface Parseable {
+    fn parse(bytes: Bytes) -> Self   // Self refers to the implementing type
+}
+
+// ❌ Wrong — self: Bytes means "the implementing type IS Bytes"
+// interface Parseable {
+//     fn parse(self: Bytes) -> T   // this won't work as intended
+// }
 ```
 
 ### Structural Satisfaction
@@ -312,15 +401,36 @@ let list2 = list1 |> push(1)     // list1 unchanged, list2 is a new value
 let list3 = list2 |> push(2)     // list2 unchanged, list3 is a new value
 ```
 
-### `let mut` — Mutable Bindings
+### Mutable Local Bindings (`mut`)
 
-`mut` on a binding means the variable name can be reassigned. The values themselves never change:
+`mut` on a binding means the variable name can be reassigned. The **values** themselves never
+change — `mut` is a property of the binding, not the value.
 
 ```bounce
-let mut list = LinkedList.empty()
-list = list |> push(1)    // rebind 'list' to a new value
-list = list |> push(2)    // rebind again
+// `let mut` and `mut` are equivalent — `let` is optional.
+let mut counter = 0
+counter = counter + 1
+counter = counter + 1   // counter is now 2
+
+// Shorthand without `let` (common in generators and loops):
+mut total = 0
+total = total + item
 ```
+
+`mut` is valid in any function context: regular functions, generators, handlers, and test
+functions. Mutations inside a closure capture the value at the time the closure is created —
+the closure has its own copy, so mutations inside a closure do not affect the outer binding:
+
+```bounce
+mut count = 0
+let increment = { => count = count + 1 }   // captures a COPY of count
+increment()
+increment()
+// count is still 0 — the closure mutated its own copy
+```
+
+To share mutable state across closures and concurrent tasks, use `State<T>` from the
+`Concurrency` effect (see `07-concurrency.md`).
 
 ### `mut` Fields — In-Place Update Sugar
 
@@ -376,16 +486,185 @@ No `Box`, no manual heap allocation. The compiler determines what needs indirect
 
 ---
 
-## 6. Open Design Questions
+## 6. V2 Decisions
 
-### `:true/:false` Unification
+### `:true/:false` Unification — Adopted
 
-Under investigation: using `:true | :false` as a universal positive/negative pattern, replacing `Option<T>` with `:true { value: T } | :false`, and `T?` as sugar. Promising but needs more validation with generics and pipelines.
+The v2 spec adopts the unified truthiness model. `Option<T>` is `(T & :true) | :false`. `T?` is
+syntactic sugar. This eliminates all special `Option` unwrapping — the value IS the option when
+present — and makes `if`, `match`, and flow-sensitive narrowing work uniformly across booleans,
+optionals, and tagged results.
 
-### `if let` Syntax
+See [02-data-structures.md §3](02-data-structures.md) for the full model, including evidence
+decay and the interaction with nested updates.
 
-Likely: `if let value = expr { ... }` for pattern matching in conditionals. Details depend on the `:true/:false` question.
+### `if let` Syntax — Resolved by `match`
 
-### Higher-Kinded Types
+Explicit `if let` syntax is not needed. `match` handles all pattern matching in conditionals, and
+flow-sensitive narrowing in plain `if` covers the common "is it present?" case for `Option<T>`.
 
-Deferred to V2. V1 uses concrete generic types only.
+```bounce
+// Flow-sensitive narrowing in if — covers the common case
+if name {
+    Terminal.println("Hello, {name}")    // name narrowed to String & :true
+}
+
+// match — for when you need the :false branch or complex patterns
+match name {
+    :false => Terminal.println("no name")
+    name   => Terminal.println("Hello, {name}")
+}
+```
+
+### Higher-Kinded Types — Deferred
+
+Higher-kinded types remain deferred beyond v2. The current generic system (concrete type
+parameters with constraints) covers all standard use cases in the spec corpus. HKTs will be
+reconsidered when real-world Bouncelang code demonstrates a genuine need.
+
+---
+
+## 7. DST / Testing
+
+### Generics Are DST-Transparent
+
+Generic functions and types have no special DST behavior. Because all values are immutable and
+all effects are tracked, generic code is inherently testable — a generic `fn sort<T: Ord>` has
+no effects, so it works identically in test and production with no handler configuration.
+
+### Property-Based Testing With Generics
+
+The standard `gen` generator works with generic types:
+
+```bounce
+test fn sort_is_idempotent<T: Ord>(list: List<T>) with [gen(List<Int>)] {
+    let sorted = sort(list)
+    assert_eq(sorted, sort(sorted))    // sorting a sorted list gives the same list
+}
+
+test fn map_preserves_length<T, U>(list: List<T>, f: pure fn(T) -> U) with [
+    gen(List<Int>),
+    gen(pure fn(Int) -> String = { n => n |> to_string }),
+] {
+    assert_eq(list.len(), list |> map(f) |> len())
+}
+```
+
+### `pure fn` in DST
+
+`pure fn` constraints are especially useful in DST because they guarantee no hidden I/O. The
+`State<T>` closures in `07-concurrency.md` use `pure fn` to prevent blocking the coordinator
+task — this makes concurrent state updates deterministic under the DST scheduler.
+
+### Value Semantics and Reproducibility
+
+Because all data is immutable and all mutation is via rebinding or structural update, any sequence
+of operations on a generic type is reproducible from the same input. There is no aliasing,
+no hidden mutation — the DST invariant "same seed → same execution" holds trivially for all
+generic code.
+
+---
+
+## 8. LSP / DX (Developer Experience)
+
+| Checklist Item | Behavior |
+|---|---|
+| **Completions** | After typing `<`, the LSP suggests known type parameters in context. After `where`, the LSP suggests available interfaces (`Ord`, `Hash`, `Display`, etc.) with documentation. After `fn f<T: `, the LSP autocompletes constraint names. |
+| **Inlay hints** | On every variable binding, the inferred type is shown: `let doubled = numbers \|> map { x => x * 2 }  // List<Int>`. On generic calls, inferred type arguments are shown: `sort(users)  // <User>`. |
+| **Diagnostics** | Missing constraint: "Function `sort` requires `T: Ord`, but `User` does not satisfy `Ord` — add `fn compare(self: User, other: User) -> :less \| :equal \| :greater` to satisfy the constraint". Type mismatch in generic: shows the expected and actual types with the full generic substitution applied. |
+| **Quick fixes** | "Generate `Display` implementation" — when a type is missing an interface the call site needs, inserts a stub implementation. "Make parameter `pure`" — when a function is already pure, offers to annotate it. |
+| **Hover / go-to-definition** | Hovering a type variable (`T`) inside a generic function shows all constraints on it. Hovering an interface name shows all types in scope that satisfy it. Go-to-definition on an interface navigates to the `interface` declaration. |
+| **Semantic highlighting** | Type parameters (`T`, `K`, `V`) receive a distinct semantic token (e.g., `typeParameter`). Interface names in `where` clauses receive the `interface` token. `pure` keyword on function types is highlighted distinctly. |
+
+---
+
+## 9. Compiling & WebAssembly (Wasm)
+
+### Monomorphization
+
+Bouncelang uses monomorphization for generics — the compiler generates a concrete implementation
+for each distinct set of type arguments used. `sort<Int>`, `sort<String>`, and `sort<User>` are
+three distinct functions in the Wasm output.
+
+This means generic code has zero runtime overhead — no boxing, no vtables, no type tags at
+runtime. The cost is code size, mitigated by tree-shaking (only used instantiations are emitted).
+
+### `opaque type` at the Wasm Boundary
+
+Opaque types export their `with` list as the WIT interface. Internal fields are hidden — the Wasm
+component model enforces the boundary at the binary level, not just the language level:
+
+```bounce
+// package.bounce
+export opaque type Connection with { open, query, close }
+```
+
+Generates a WIT interface where only `open`, `query`, and `close` are exported. No internal field
+accessor is present in the WIT. An external Wasm consumer cannot bypass the `opaque` boundary even
+through low-level Wasm tooling.
+
+### `nominal type` at the Wasm Boundary
+
+Nominal types are transparent at the Wasm level — they compile to their underlying type. The
+nominal distinction exists only in the Bouncelang type system:
+
+```bounce
+nominal type Email = String
+```
+
+Compiles to `string` in WIT. A Wasm consumer receives a plain string. The `Email` vs `String`
+distinction is enforced within Bouncelang code only.
+
+### Value Semantics and Move Optimization
+
+All values are immutable. The compiler uses move semantics to optimize — when a value has exactly
+one owner and is passed to a function that consumes it, the compiler generates an in-place mutation
+rather than a copy. This is invisible to the programmer but produces efficient Wasm output without
+requiring explicit ownership annotations.
+
+### Recursive Types
+
+Recursive types (`Tree<T>`, `Json`) require heap allocation for the recursive field. The compiler
+inserts `ref` (heap indirection) automatically at recursive positions. No `Box<T>` or explicit
+heap annotation is visible in Bouncelang source code.
+
+---
+
+## 10. Serialization
+
+### Auto-Derived Interfaces
+
+The compiler auto-derives `Eq`, `Hash`, `Debug`, and `Serialize`/`Deserialize` from fields for
+all `type` and `nominal type` declarations. No annotation needed:
+
+```bounce
+type Point = { x: Float, y: Float }
+// Auto-derived: Eq, Hash, Debug, Serialize, Deserialize
+
+nominal type UserId = Int
+// Auto-derived: Eq, Hash, Debug, Serialize, Deserialize
+// NOT interchangeable with plain Int in function signatures
+```
+
+`opaque type` auto-derives `Debug` for internal use only — the debug output includes all fields.
+For external serialization, only fields listed in the `with` export list are available. Custom
+serialization for opaque types is defined via a `view` declaration (see
+[08-serialization-boundaries.md](08-serialization-boundaries.md)).
+
+### Overriding Derivation
+
+An explicit function definition overrides the auto-derived version:
+
+```bounce
+type User = { name: String, email: Email, age: Int }
+// Auto-derived: Debug, Eq, Hash, Serialize
+
+// Override display (not auto-derived, requires domain logic)
+fn display(self: User) -> String { "{self.name} <{self.email}>" }
+
+// Override serialize to exclude sensitive fields
+fn serialize(self: User) -> Bytes {
+    Json.encode({ name: self.name, email: self.email })
+    // deliberately omitting age
+}
+```

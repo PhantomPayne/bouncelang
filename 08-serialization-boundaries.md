@@ -314,7 +314,9 @@ fields {
     // Multiple validators (AND semantics — all must pass)
     password as String.min_length(8) & String.max_length(100) & String.no_whitespace
 
-    // Optional field
+    // Optional field — `?` suffix marks the field as not required in incoming data.
+    // If the field is absent, the mapped target field receives `:false` (Option<T> absent value).
+    // If the field is present, it is validated normally. The target type must have `field: T?`.
     nickname as String.max_length(50)?
 }
 ```

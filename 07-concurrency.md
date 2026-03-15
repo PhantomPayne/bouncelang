@@ -157,15 +157,45 @@ All operators are lazy (return a new Sequence) unless marked as terminal.
 | `combine_latest` | `(Sequence<T>, Sequence<U>) -> Sequence<(T, U)>` | Latest from each when either emits |
 
 ### Terminal (require `:finite`)
+
+> **Non-terminal operators** (`map`, `flat_map`, `filter`, `scan`, `debounce`, etc.) are in the
+> **Transform**, **Filter**, **Time**, **Combine**, and **Utility** sections above — they return a
+> new `Sequence` rather than consuming it. The operators below **consume** a finite sequence and
+> produce a single value.
+
 | Operator | Signature | Description |
 |---|---|---|
 | `collect` | `(Sequence<T> & :finite) -> List<T>` | Gather all values into a list |
 | `count` | `(Sequence<T> & :finite) -> Int` | Count values |
 | `sum` | `(Sequence<Int> & :finite) -> Int` | Sum all values |
-| `reduce` | `(Sequence<T> & :finite, fn(T, T) -> T) -> T` | Reduce to single value |
-| `for_each` | `(Sequence<T> & :finite, fn(T) -> Unit) -> Unit` | Side-effect per value |
-| `first` | `(Sequence<T>) -> T?` | First value or none |
-| `last` | `(Sequence<T> & :finite) -> T?` | Last value or none |
+| `reduce` | `(Sequence<T> & :finite, fn(T, T) -> T) -> T` | Reduce to single value — **panics on empty sequence** |
+| `fold` | `(Sequence<T> & :finite, U, fn(U, T) -> U) -> U` | Reduce with an initial value — safe on empty sequence |
+| `each` | `(Sequence<T> & :finite, fn(T) -> ()) -> ()` | Side-effect per value (canonical name — **not** `for_each`) |
+| `first` | `(Sequence<T>) -> T?` | First value or `:false` |
+| `last` | `(Sequence<T> & :finite) -> T?` | Last value or `:false` |
+| `any` | `(Sequence<T> & :finite, fn(T) -> Bool) -> Bool` | True if any element matches |
+| `all` | `(Sequence<T> & :finite, fn(T) -> Bool) -> Bool` | True if all elements match |
+| `join` | `(Sequence<String> & :finite, String) -> String` | Join strings with separator |
+
+> **`each` is the canonical terminal iteration operator.** The name `for_each` is not valid.
+> `each` does not require the sequence to be finite when used in a non-consuming context such as
+> inside a `Concurrency.scope` where the scope itself bounds the iteration.
+
+> **`reduce` vs `fold`:** Use `reduce` when the sequence is guaranteed non-empty and the element
+> type is also the accumulator type. Use `fold` when the sequence may be empty or when you need a
+> different accumulator type (e.g., `fold([], { acc, item => acc |> push(item) })`). Calling
+> `reduce` on an empty sequence is a **panic**.
+
+```bounce
+// reduce — elements must have the same type as the result
+let max = scores |> reduce { a, b => if a > b { a } else { b } }
+
+// fold — safe on empty, accumulator can differ from element type
+let total = items |> fold(0, { acc, item => acc + item.price })
+
+// join — string concatenation with separator
+let names = users |> map { u => u.name } |> join(", ")
+```
 
 ### Utility
 | Operator | Signature | Description |
@@ -223,20 +253,50 @@ Concurrency.scope { s =>
 
 Both return a `Task<T>` handle.
 
+### `Task<T>` API
+
+`Task<T>` is a handle to a running concurrent computation. It satisfies `Sequence<T> & :finite`
+with exactly one value — the result when the task completes.
+
+```bounce
+// Task<T> methods:
+//   .await() -> T         — suspend until the task completes, return its result
+//   .cancel() -> ()       — cancel the task (no-op if already done)
+//   .is_done() -> Bool    — non-blocking check
+
+// Await a single task
+let result: Int = task.await()
+
+// Await all tasks in a list
+let results: List<Int> = tasks |> map { t => t.await() } |> collect
+
+// Await all tasks, discarding results (for side-effecting tasks)
+tasks |> each { t => t.await() }
+
+// Await the first task to finish (cancel the others)
+let first: T = Concurrency.race([task_a, task_b, task_c])
+```
+
+If a `spawn`ed task raises an unhandled error, calling `.await()` re-raises that error in the
+calling fiber. If a `detach`ed task raises, the error is silently discarded (use `try` inside the
+detached block to handle it).
+
 ```bounce
 // Parallel computation — linked (one failure cancels everything)
 let (users, posts) = Concurrency.scope { s =>
     let a = s.spawn { fetch_users() }
     let b = s.spawn { fetch_posts() }
-    (a.join(), b.join())
+    (a.await(), b.await())
 }
 
 // Server — detached (one connection dying doesn't affect others)
 Concurrency.scope { s =>
     for conn in listener.accept() {
         s.detach {
-            try { handle_connection(conn) }
-            catch { err => IO.eprintln("connection error: {err}") }
+            try handle_connection(conn) {
+                _ => ()
+                err => Terminal.eprintln("connection error: {err}")
+            }
         }
     }
 }
@@ -310,8 +370,8 @@ let b = s.spawn { strategy_b() }
 // Wait for whichever finishes first
 for event in select(a: a, b: b) {
     match event {
-        :a { result } => IO.print("A won: {result}")
-        :b { result } => IO.print("B won: {result}")
+        :a { result } => Terminal.println("A won: {result}")
+        :b { result } => Terminal.println("B won: {result}")
     }
 }
 ```
@@ -372,12 +432,12 @@ The `pure` annotation prevents:
 ```bounce
 // COMPILE ERROR: closure is not pure
 counter.update { n =>
-    let data = Network.get(url)     // effect inside pure closure!
+    let data = Http.get(url)     // effect inside pure closure!
     n + data.value
 }
 
 // CORRECT: do effects outside, update with the result
-let data = Network.fetch(url)
+let data = Http.get(url)
 counter.update { n => n + data.value }
 ```
 
@@ -493,7 +553,7 @@ let sub: Sequence<String> = announcements.subscribe()
 // Each call to subscribe() creates a new independent subscription
 // Use in for loops, pipelines, select — it's a Sequence
 for msg in sub {
-    IO.print(msg)
+    Terminal.print(msg)
 }
 ```
 
@@ -651,7 +711,7 @@ Bounded parallel map over a sequence:
 
 ```bounce
 urls
-    |> concurrent_map(max: 10) { url => Network.get(url) }
+    |> concurrent_map(max: 10) { url => Http.get(url) }
     |> collect
 ```
 
@@ -663,7 +723,7 @@ Retry with configurable backoff:
 
 ```bounce
 let result = retry(max: 5, backoff: :exponential) {
-    Network.get(flaky_url)
+    Http.get(flaky_url)
 }
 ```
 
@@ -747,11 +807,11 @@ An unhandled error in a linked task cancels all siblings and propagates to the s
 
 ```bounce
 let result = Concurrency.scope { s =>
-    let a = s.spawn { fetch_users() }       // raises NetworkError
+    let a = s.spawn { fetch_users() }       // raises HttpError
     let b = s.spawn { fetch_posts() }       // cancelled when a fails
     (a.join(), b.join())
 }
-// NetworkError propagates out of the scope
+// HttpError propagates out of the scope
 ```
 
 ### Detached Tasks (`detach`)
@@ -775,8 +835,8 @@ let task = s.spawn { might_fail() }
 try {
     let result = task.join()
 } catch {
-    NetworkError => fallback()
-    Cancelled => IO.eprintln("task was cancelled")
+    HttpError => fallback()
+    Cancelled => Terminal.eprintln("task was cancelled")
 }
 ```
 
@@ -786,7 +846,7 @@ If a sequence inside `select` raises an error, the error propagates through the 
 
 ```bounce
 for event in select(msg: ws.messages, data: flaky_stream) {
-    // If flaky_stream raises NetworkError, it propagates here
+    // If flaky_stream raises HttpError, it propagates here
     match event { ... }
 }
 ```

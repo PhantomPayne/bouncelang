@@ -3,8 +3,8 @@
 **Status:** Draft — evolved from design review discussion
 **Supersedes:** `docs/plans/2026-03-11-impl-resolution.md` (impl blocks dropped in favor of UFCS)
 **Related:**
-- [worlds-and-handlers.md](file:///Users/tom/projects/bouncelang/docs/spec/worlds-and-handlers.md) — worlds, handlers, config
-- [modules-and-imports.md](file:///Users/tom/projects/bouncelang/docs/spec/modules-and-imports.md) — sub-modules, imports, stdlib, WASM linking
+- [worlds-and-handlers.md](worlds-and-handlers.md) — worlds, handlers, config
+- [modules-and-imports.md](modules-and-imports.md) — sub-modules, imports, stdlib, WASM linking
 
 ---
 
@@ -254,24 +254,93 @@ Libraries define types, functions, and handlers that applications wire together 
 
 ## 7. LSP Features for UFCS
 
-### Semantic Highlighting
-- `self` parameters highlighted distinctly (e.g., italic or unique color) to signal UFCS eligibility
+| Checklist Item | Behavior |
+|---|---|
+| **Completions** | Typing `.` after any value shows companion functions first (with a badge), then other in-scope functions with a matching `self` type, then unimported functions from dependencies with an auto-import action. |
+| **Inlay hints** | Inferred effect annotations on every `fn` definition: `fn build_report() -> Report  // [Network, FileSystem]`. Pipeline step types: hover any `\|>` to see the type flowing through. `self` type on dot-calls when the receiver is a structural record. |
+| **Diagnostics** | Ambiguous UFCS call (same function name for the same `self` type from two imports): "Ambiguous — `display` for `User` imported from both `accounts` and `pretty-print`. Alias one import." Calling `.method()` on a function that has `user: T` instead of `self: T`: "`display` does not use `self` — call as `display(user)` or rename parameter to `self`." |
+| **Quick fixes** | "Make companion" — cursor on `fn f(self: T)`, adds it to `package.bounce`'s companion list. "Show all companions" — cursor on a type name, shows all companions in a panel. "Resolve ambiguity" — offers to alias one of the conflicting imports. |
+| **Hover / go-to-definition** | Hovering a dot-call shows the resolved function and the full desugared form: `user.display() → display(user)`. Go-to-definition navigates to the `fn` declaration, not to `package.bounce`. |
+| **Semantic highlighting** | `self` parameters highlighted distinctly (e.g., italic or unique color). Companion functions in dot-call position receive a "method" semantic token distinct from plain function calls. |
 
-### Autocomplete on Dot
-When typing `user.`:
-1. **Companion functions** shown first with a "companion" badge — always available
-2. **Imported functions** with matching `self: User` shown next
-3. **Unimported functions** from dependencies shown last with "auto-import" action
+---
 
-### Quick Actions
-- **"Show companions"** — cursor on a type name, see all companion functions from `package.bounce`
-- **"Make companion"** — cursor on a function with `self: T`, add it to `package.bounce`'s companion list
+## 8. DST / Testing
 
-### Inlay Hints
-- **Inferred effects** on function calls and definitions
-- **Pipeline step types** — hover any `|>` to see the type flowing through
-- **Self type** — on dot-calls, show the resolved `self` type when it's structural
+### UFCS and DST
 
-### Auto-Import
-- Selecting an unimported function from autocomplete inserts the import statement automatically
-- Companion functions never need manual import — they come with the type
+UFCS functions have no special DST behavior. Because methods are regular functions with value
+semantics, there is no hidden state — every function call is a pure transformation of its inputs
+(unless it explicitly uses an effect). DST intercepts effects at the world boundary, not at the
+call site, so UFCS functions behave identically in test and production.
+
+### Testing Companion Functions
+
+Companion functions are tested exactly like regular functions:
+
+```bounce
+test fn email_validate_rejects_missing_at() {
+    try Email.validate("not-an-email") {
+        _ => fail("expected error")
+        ValidationError { field, ... } => assert_eq(field, "email")
+    }
+}
+
+test fn money_add_preserves_currency() {
+    let a = Money { amount: 1000, currency: "USD" }
+    let b = Money { amount: 500,  currency: "USD" }
+    let total = a + b
+    assert_eq(total.amount, 1500)
+    assert_eq(total.currency, "USD")
+}
+```
+
+### `package.bounce` Is Compile-Time Only
+
+The `package.bounce` declarations have no runtime presence. They are compile-time visibility
+rules — no additional DST configuration is needed for the package system.
+
+---
+
+## 9. Wasm Compilation Model
+
+### UFCS Functions = Regular Wasm Functions
+
+UFCS desugaring is purely syntactic. `user.display()` → `display(user)` happens at the AST
+level. The output Wasm sees only `display(user)`. There is no vtable, no dynamic dispatch, no
+method table overhead.
+
+### `opaque type` API Surface in Wasm
+
+The `with { }` companion list in `package.bounce` controls the WIT interface. Only listed
+functions appear as exported symbols in the Wasm component. Private companions (listed in the
+source file but not in `package.bounce`) are internal and optimized freely — they may be inlined
+or eliminated by the compiler.
+
+```bounce
+// package.bounce
+export opaque type User with { display, activate }
+// Only display() and activate() are Wasm exports
+// All internal helpers (validate_email, hash_password) are invisible
+```
+
+### Operator Overloading at the Wasm Level
+
+Operators desugar to interface method calls before Wasm compilation. `a + b` where `a: Money`
+becomes `add(a, b)`. The Wasm output contains a plain `add` function — no operator table, no
+runtime dispatch. The arithmetic interface is a compile-time type-system concept only.
+
+---
+
+## 10. Serialization
+
+Packages control their serialization surface through `package.bounce`. Only exported types with
+`view` declarations (see [08-serialization-boundaries.md](08-serialization-boundaries.md)) cross
+serialization boundaries.
+
+The key rule: **`Response.json(user)` is a compile error**. Only `Response.json(User.public(user))`
+compiles, because `Response.json` requires a `View<_>` argument. This is enforced structurally by
+the nominal `View<T>` wrapper that `view` declarations return.
+
+For opaque types, the `with { }` list in `package.bounce` governs which fields are readable —
+and therefore which fields can appear in `view` declarations for that type.

@@ -2,9 +2,9 @@
 
 **Status:** Draft — evolved from design review discussion
 **Related:**
-- [atoms-and-unions.md](file:///Users/tom/projects/bouncelang/docs/spec/atoms-and-unions.md) — union types, pattern matching
-- [worlds-and-handlers.md](file:///Users/tom/projects/bouncelang/docs/spec/worlds-and-handlers.md) — worlds, effect handlers
-- [methods-and-packages.md](file:///Users/tom/projects/bouncelang/docs/spec/methods-and-packages.md) — `pub fn` effect annotations
+- [atoms-and-unions.md](atoms-and-unions.md) — union types, pattern matching
+- [worlds-and-handlers.md](worlds-and-handlers.md) — worlds, effect handlers
+- [methods-and-packages.md](methods-and-packages.md) — `pub fn` effect annotations
 
 ---
 
@@ -26,10 +26,10 @@ Effects propagate naturally. No annotation needed on internal functions:
 ```bounce
 fn process(input: String) -> User {
     let id = parse_int(input)       // Raise<ParseError> propagates
-    let user = fetch_user(id)       // Raise<NetworkError> propagates
+    let user = fetch_user(id)       // Raise<HttpError> propagates
     user
 }
-// compiler infers: Raise<ParseError>, Raise<NetworkError>
+// compiler infers: Raise<ParseError>, Raise<HttpError>
 ```
 
 ---
@@ -39,7 +39,7 @@ fn process(input: String) -> User {
 Errors are declared with `error` — a nominal type that the compiler knows is intended for use with `Raise`:
 
 ```bounce
-error NetworkError = { url: String, status: Int, message: String }
+error HttpError = { url: String, status: Int, message: String }
 error TimeoutError = { url: String, timeout_ms: Int }
 error ParseError = { input: String, position: Int, expected: String }
 error ValidationError = { field: String, message: String }
@@ -59,7 +59,7 @@ Related errors can be grouped under a parent error:
 
 ```bounce
 error ApiError =
-    | NetworkError { url: String, status: Int, message: String }
+    | HttpError { url: String, status: Int, message: String }
     | TimeoutError { url: String, timeout_ms: Int }
     | RateLimitError { retry_after_ms: Int }
 ```
@@ -80,7 +80,7 @@ pub fn fetch_user(id: Int) -> User
 ```bounce
 try fetch_user(42) {
     user => process(user)
-    NetworkError { message, ... } => {
+    HttpError { message, ... } => {
         Logger.warn("Network issue: {message}")
         retry()
     }
@@ -95,7 +95,7 @@ The compiler knows all `Raise` effects on the expression. Missing an error is a 
 ```bounce
 try fetch_user(42) {
     user => process(user)
-    NetworkError { ... } => retry()
+    HttpError { ... } => retry()
     // ❌ compile error: unhandled error: TimeoutError
     //    raised by: fetch_user → http_get (services/http.bounce:28)
 }
@@ -109,13 +109,20 @@ Handle some errors, let others bubble up:
 fn get_user(id: Int) -> User {
     try fetch_user(id) {
         user => user
-        NetworkError { ... } => retry(id)
+        HttpError { ... } => retry(id)
         _ => raise    // re-raise TimeoutError — compiler infers it on get_user
     }
 }
 ```
 
 `_ => raise` means "I acknowledge these errors exist but I'm not handling them here." The compiler infers the unhandled errors as effects on the enclosing function.
+
+> **`raise` vs `raise(e)` — two distinct forms:**
+>
+> - **`raise(error)`** — constructs and raises a *new* error value. Valid anywhere.
+> - **`raise`** (bare, no arguments) — re-raises the *current* error. Only valid inside a `try`
+>   arm. The compiler carries the error type from the matched arm to the enclosing function's
+>   inferred effect set. Writing `raise` outside a `try` arm is a compile error.
 
 ### Success Arm Can Raise
 
@@ -125,7 +132,7 @@ The success arm is normal code — its effects propagate:
 fn process(id: Int) -> Report {
     try fetch_user(id) {
         user => generate_report(user)    // Raise<ReportError> propagates
-        NetworkError { ... } => default_report()
+        HttpError { ... } => default_report()
     }
 }
 // compiler infers: Raise<ReportError> (from success arm)
@@ -138,8 +145,8 @@ Match specific errors within a group, or use the group name as a catch-some:
 ```bounce
 try fetch_user(42) {
     user => use(user)
-    NetworkError { status: 503, ... } => retry()     // specific variant + field match
-    NetworkError { ... } => fail()                    // any NetworkError
+    HttpError { status: 503, ... } => retry()     // specific variant + field match
+    HttpError { ... } => fail()                    // any HttpError
     ApiError { ... } => handle_any_api_error()        // any member of the group
 }
 ```
@@ -170,9 +177,10 @@ Use spread to add context to an existing error:
 fn fetch_user(id: Int) -> User {
     try http_get("/users/{id}") {
         response => parse(response)
-        NetworkError(e) => raise(NetworkError {
-            ...e,
-            message: "fetching user {id}: {e.message}",
+        HttpError { url, status, message } => raise(HttpError {
+            url,
+            status,
+            message: "fetching user {id}: {message}",
         })
     }
 }
@@ -273,7 +281,7 @@ panic("invariant violated")   // explicit
 
 // Raise — expected failures
 fn parse(s: String) -> Int    // Raise<ParseError>
-fn fetch(url: String) -> Data // Raise<NetworkError>
+fn fetch(url: String) -> Data // Raise<HttpError>
 ```
 
 ### Arithmetic Overflow
@@ -305,7 +313,7 @@ handler ErrorReporter(sentry_dsn: String): Raise {
 
 world production {
     entry app
-    handle Network  with WasiHttp
+    handle Http     with WasiHttp
     handle Database with Postgres(config.database_url)
     handle Raise    with ErrorReporter(config.sentry_dsn)
 }
@@ -317,7 +325,7 @@ Errors auto-serialize to structured JSON via `to_json`:
 
 ```json
 {
-  "error": "NetworkError",
+  "error": "HttpError",
   "fields": {
     "url": "/api/users/42",
     "status": 503,
@@ -368,7 +376,7 @@ Internal functions infer all effects. Library exports require explicit annotatio
 ```bounce
 // Internal — effects inferred, shown as LSP inlay hints
 fn fetch_user(id: Int) -> User {
-    // inferred: Raise<NetworkError>, Raise<TimeoutError>
+    // inferred: Raise<HttpError>, Raise<TimeoutError>
 }
 
 // Library export — effects explicit
@@ -412,12 +420,81 @@ test fn division_by_zero_panics() {
 
 ---
 
-## Summary
+## 11. LSP / DX (Developer Experience)
+
+| Checklist Item | Behavior |
+|---|---|
+| **Completions** | Typing `raise(` suggests all `error` types in scope. Inside a `try` block, after the success arm, the LSP suggests all `Raise<E>` types inferred on the expression, as pattern stubs with field names. |
+| **Inlay hints** | On every internal `fn`, inlay hints show the inferred `Raise<E>` effects: `fn process(id: Int) -> User  // inferred: Raise<ParseError>, Raise<HttpError>`. On `pub fn`, missing explicit effect annotations are shown as hints with a "Make explicit" quick-fix. |
+| **Diagnostics** | Missing arm in `try`: "Unhandled error: `TimeoutError`, raised by `fetch_user → http_get` (services/http.bounce:28)". Using `?` operator: "`?` is not available — use `try` blocks". Using `catch` keyword: "`catch` is not available — use `try` with error arms". |
+| **Quick fixes** | "Add missing error arms" — inserts stubs for all unhandled errors, with field destructuring and a `// TODO` comment. "Make effects explicit" — adds `with Raise<...>` annotation to a `pub fn`. "Extract error group" — wraps multiple `Raise<X>` errors into a named `error Group = \| X \| Y`. |
+| **Hover / go-to-definition** | Hovering `raise(HttpError { ... })` shows the full error type including auto-derived JSON structure. Hovering a `try` expression shows the full set of error arms expected. Go-to-definition on an error name navigates to its `error` declaration. |
+| **Semantic highlighting** | `error` declarations are highlighted as type declarations. `raise` calls are highlighted distinctly (e.g., as a control flow keyword) to signal "this exits the current function path". `try` arms are highlighted like match arms. |
+
+---
+
+## 12. Compiling & WebAssembly (Wasm)
+
+`Raise<E>` is a Layer 1 primitive — it compiles to **conditional branches**, not Fiber suspension.
+There is zero overhead from the async/WASI machinery.
+
+### Compilation model
+
+```bounce
+fn get_user(id: Int) -> User {
+    let row = db_lookup(id)
+    if row == :false {
+        raise NotFoundError { id }
+    }
+    parse_user(row)
+}
+```
+
+Compiles to approximately:
+
+```wat
+;; Wasm (conceptual — actual output uses tagged return values)
+(func $get_user (param $id i64) (result i32 i64)
+  ;; i32 is the discriminant: 0 = success, 1 = NotFoundError
+  ;; i64 carries either the User ptr or the error struct ptr
+  (local $row i64)
+  (local.set $row (call $db_lookup (local.get $id)))
+  (if (i64.eq (local.get $row) (i64.const 0))  ;; :false check
+    (then
+      ;; return NotFoundError tag + error struct
+      (return (i32.const 1) (call $alloc_not_found_error (local.get $id)))))
+  ;; return success tag + user ptr
+  (i32.const 0) (call $parse_user (local.get $row))
+)
+```
+
+The tagged return pattern means each `Raise<E>` adds one `i32` discriminant to the return ABI. The
+compiler collapses multiple errors into a single discriminant field — `Raise<A | B | C>` is one
+`i32`, not three.
+
+### `error` structs at the Wasm boundary
+
+`error` types are emitted as standard `record` types in WIT. Auto-derived `to_json` compiles to
+a serialization function over those fields — no reflection, no runtime type tags.
+
+```wit
+// error HttpError = { url: String, status: Int, message: String }
+record network-error { url: string, status: s64, message: string }
+```
+
+### Panic vs Raise at the Wasm level
+
+| Mechanism | Wasm instruction | Host behavior |
+|---|---|---|
+| `Raise<E>` | Tagged `return` (branch) | Caller handles the tagged value |
+| `Panic` | `unreachable` | Runtime traps; host catches the trap |
+
+
 
 | Concept | Decision |
 |---|---|
 | Error declaration | `error` keyword — nominal, auto-Display, auto-JSON |
-| Error grouping | Union syntax: `error ApiError = \| NetworkError \| TimeoutError` |
+| Error grouping | Union syntax: `error ApiError = \| HttpError \| TimeoutError` |
 | Raising | `raise(error)` — performs `Raise<E>` effect |
 | Handling | `try expr { success => ..., ErrorType { ... } => ... }` |
 | Exhaustiveness | Compiler checks all possible errors in `try` |
